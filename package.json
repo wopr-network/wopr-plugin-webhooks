@@ -1,0 +1,31 @@
+{
+  "name": "wopr-plugin-webhooks",
+  "version": "1.0.0",
+  "description": "HTTP webhook ingress for WOPR - trigger agent runs from external systems",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "wopr",
+    "plugin",
+    "webhooks",
+    "automation"
+  ],
+  "author": "WOPR",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "@types/node": "^20.0.0"
+  },
+  "peerDependencies": {},
+  "wopr": {
+    "plugin": {
+      "entry": "dist/index.js"
+    }
+  }
+}
