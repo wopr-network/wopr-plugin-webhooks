@@ -15,7 +15,8 @@ import type {
   WebhookResponse,
 } from "./types.js";
 import { applyMappings } from "./mappings.js";
-import { wrapExternalContent, sanitizeString, secureCompare } from "./security.js";
+import { wrapExternalContent, sanitizeString, secureCompare, verifyGitHubSignature } from "./security.js";
+import type { GitHubHookConfig } from "./types.js";
 
 // ============================================================================
 // Types
@@ -23,6 +24,7 @@ import { wrapExternalContent, sanitizeString, secureCompare } from "./security.j
 
 export interface WebhookHandlerContext {
   config: WebhooksConfigResolved;
+  githubConfig?: GitHubHookConfig;
   inject: (session: string, message: string, options?: InjectOptions) => Promise<string>;
   logMessage: (session: string, message: string, options?: LogOptions) => void;
   emit: (event: string, payload: Record<string, unknown>) => Promise<void>;
@@ -91,10 +93,26 @@ export function extractToken(req: IncomingMessage, url: URL): TokenResult {
 // Body Reading
 // ============================================================================
 
+export interface RawBodyResult {
+  ok: true;
+  value: unknown;
+  raw: string;
+}
+
+/**
+ * Read and parse a JSON HTTP request body up to a size limit, returning the parsed value and the raw body.
+ *
+ * Trims the body before parsing; an empty or whitespace-only body is treated as `{}`. If the accumulated
+ * payload exceeds `maxBytes`, parsing is aborted and a size error is returned.
+ *
+ * @param req - The incoming HTTP request to read the body from
+ * @param maxBytes - Maximum allowed payload size in bytes; reading stops with an error if exceeded
+ * @returns On success: an object with `ok: true`, `value` containing the parsed JSON (or `{}` for empty body), and `raw` containing the raw body string. On failure: an object with `ok: false` and an `error` string describing the problem.
+ */
 export async function readJsonBody(
   req: IncomingMessage,
   maxBytes: number
-): Promise<{ ok: true; value: unknown } | { ok: false; error: string }> {
+): Promise<RawBodyResult | { ok: false; error: string }> {
   return await new Promise((resolve) => {
     let done = false;
     let total = 0;
@@ -115,14 +133,15 @@ export async function readJsonBody(
     req.on("end", () => {
       if (done) return;
       done = true;
-      const raw = Buffer.concat(chunks).toString("utf-8").trim();
-      if (!raw) {
-        resolve({ ok: true, value: {} });
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        resolve({ ok: true, value: {}, raw });
         return;
       }
       try {
-        const parsed = JSON.parse(raw) as unknown;
-        resolve({ ok: true, value: parsed });
+        const parsed = JSON.parse(trimmed) as unknown;
+        resolve({ ok: true, value: parsed, raw });
       } catch (err) {
         resolve({ ok: false, error: String(err) });
       }
@@ -463,6 +482,26 @@ interface AgentRunConfig {
   allowUnsafeExternalContent?: boolean;
 }
 
+/**
+ * Run an agent message in the specified session and emit webhook lifecycle events.
+ *
+ * Injects `config.message` into `config.sessionKey`, logs start and completion, and:
+ * - emits `webhook:agent:response` with delivery details when `config.deliver` is true and `config.channel` is provided;
+ * - emits `webhook:agent:error` on failure.
+ *
+ * @param config - Agent run options including:
+ *   - `message`: the message text to send to the agent
+ *   - `name`: display name for the agent/run
+ *   - `sessionKey`: session to inject the message into
+ *   - `deliver`: whether to emit a delivery event when a response is produced
+ *   - `channel`: delivery channel identifier (required for emission)
+ *   - `to`: optional target recipient metadata for delivery events
+ *   - `model`: optional model hint for the injection
+ *   - `thinking`: optional thinking metadata for the injection
+ *   - `timeoutSeconds`: optional request timeout in seconds
+ *   - `allowUnsafeExternalContent`: if true, do not wrap external content with safety boundaries
+ * @param ctx - Webhook handler context used for injection, logging, and event emission
+ */
 async function runAgentAsync(
   config: AgentRunConfig,
   ctx: WebhookHandlerContext
@@ -527,6 +566,148 @@ async function runAgentAsync(
       message,
       error: String(err),
     });
+  }
+}
+
+// ============================================================================
+// GitHub Webhook Handler
+// ============================================================================
+
+/**
+ * Handle GitHub webhook events with optional signature verification, organization filtering, and routing to configured sessions.
+ *
+ * Verifies the X-Hub-Signature-256 header when a webhook secret is configured, enforces allowed organizations if set, translates common GitHub events (pull_request, pull_request_review, release, and generic events) into a sanitized message, and injects that message into the configured target session (e.g., prReviewSession or releaseSession).
+ *
+ * @param payload - Parsed JSON payload of the webhook
+ * @param rawBody - Raw request body (UTF-8) used for signature verification
+ * @param headers - Normalized request headers (expects `x-hub-signature-256` and `x-github-event`)
+ * @param ctx - Webhook handler context with config, inject/emit helpers, and logger
+ * @returns A WebhookResponse describing the outcome; `ok: true` with `action` and `sessionKey` when delivered or skipped, `ok: false` with an `error` message on failure or when no target session is configured.
+ */
+export async function handleGitHub(
+  payload: Record<string, unknown>,
+  rawBody: string,
+  headers: Record<string, string>,
+  ctx: WebhookHandlerContext
+): Promise<WebhookResponse> {
+  const githubConfig = ctx.githubConfig;
+
+  // Verify signature if secret is configured
+  if (githubConfig?.webhookSecret) {
+    const signature = headers["x-hub-signature-256"];
+    if (!verifyGitHubSignature(Buffer.from(rawBody, "utf-8"), signature, githubConfig.webhookSecret)) {
+      ctx.logger.warn({ msg: "GitHub webhook signature verification failed" });
+      return { ok: false, error: "Invalid signature" };
+    }
+    ctx.logger.debug({ msg: "GitHub webhook signature verified" });
+  }
+
+  // Get event type from header
+  const eventType = headers["x-github-event"];
+  if (!eventType) {
+    return { ok: false, error: "Missing X-GitHub-Event header" };
+  }
+
+  // Handle ping event (sent on webhook creation/edit)
+  if (eventType === "ping") {
+    ctx.logger.info({ msg: "GitHub webhook ping received" });
+    await ctx.emit("webhook:github", { event: "ping" });
+    return { ok: true, action: "skipped" };
+  }
+
+  // Check allowed orgs if configured (fix nested owner access)
+  const org = (payload.organization as Record<string, unknown> | undefined)?.login as string | undefined
+    ?? ((payload.repository as Record<string, unknown> | undefined)?.owner as Record<string, unknown> | undefined)?.login as string | undefined;
+
+  if (githubConfig?.allowedOrgs && githubConfig.allowedOrgs.length > 0) {
+    const normalizedOrg = (org || "").trim().toLowerCase();
+    const allowed = githubConfig.allowedOrgs.map((o) => o.trim().toLowerCase());
+
+    if (!normalizedOrg || !allowed.includes(normalizedOrg)) {
+      ctx.logger.warn({ msg: "GitHub webhook from unauthorized org", org });
+      return { ok: false, error: "Unauthorized organization" };
+    }
+  }
+
+  // Determine target session based on event type
+  let targetSession: string | undefined;
+  let message: string;
+
+  if (eventType === "pull_request" || eventType === "pull_request_review") {
+    targetSession = githubConfig?.prReviewSession;
+
+    const pr = payload.pull_request as Record<string, unknown> | undefined;
+    const action = payload.action as string;
+    const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
+
+    // Sanitize untrusted fields
+    const safeAction = sanitizeString(action, 200);
+    const safeRepo = sanitizeString(repo, 500);
+    const safePrNumber = sanitizeString(String(pr?.number ?? ""), 50);
+    const safeTitle = sanitizeString(pr?.title, 2000);
+    const safeUser = sanitizeString((pr?.user as Record<string, unknown>)?.login, 200);
+    const safeUrl = sanitizeString(pr?.html_url, 2000);
+
+    message = `GitHub ${eventType}: ${safeAction}\n` +
+      `Repository: ${safeRepo}\n` +
+      `PR #${safePrNumber}: ${safeTitle}\n` +
+      `By: ${safeUser}\n` +
+      `URL: ${safeUrl}`;
+  } else if (eventType === "release") {
+    targetSession = githubConfig?.releaseSession;
+
+    const release = payload.release as Record<string, unknown> | undefined;
+    const action = payload.action as string;
+    const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
+
+    // Sanitize untrusted fields
+    const safeAction = sanitizeString(action, 200);
+    const safeRepo = sanitizeString(repo, 500);
+    const safeTag = sanitizeString(release?.tag_name, 200);
+    const safeName = sanitizeString(release?.name, 500);
+    const safeUrl = sanitizeString(release?.html_url, 2000);
+
+    message = `GitHub release: ${safeAction}\n` +
+      `Repository: ${safeRepo}\n` +
+      `Release: ${safeTag} - ${safeName}\n` +
+      `URL: ${safeUrl}`;
+  } else {
+    // Fall back to generic preset handling
+    const safeAction = sanitizeString(payload.action, 200) || "event";
+    const safeRepo = sanitizeString((payload.repository as Record<string, unknown>)?.full_name, 500);
+
+    message = `GitHub ${eventType}: ${safeAction}\n` +
+      `Repository: ${safeRepo}`;
+  }
+
+  if (!targetSession) {
+    ctx.logger.debug({ msg: "No target session configured for GitHub event", eventType });
+    // Fall through to standard mapped handler
+    return { ok: false, error: "no_target_session" };
+  }
+
+  ctx.logger.info({
+    msg: "GitHub webhook received",
+    event: eventType,
+    action: payload.action,
+    targetSession,
+  });
+
+  // Wrap content safely and inject
+  const safeMessage = wrapExternalContent(message, "github");
+
+  try {
+    await ctx.inject(targetSession, safeMessage, { from: "github" });
+    await ctx.emit("webhook:github", {
+      event: eventType,
+      action: payload.action,
+      repository: (payload.repository as Record<string, unknown>)?.full_name,
+      targetSession,
+    });
+    return { ok: true, action: "wake", sessionKey: targetSession };
+  } catch (err) {
+    ctx.logger.error({ msg: "GitHub webhook injection failed", error: String(err) });
+    return { ok: false, error: String(err) };
   }
 }
 

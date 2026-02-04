@@ -4,6 +4,8 @@
  * Payload safety wrappers for untrusted external content.
  */
 
+import { createHmac, randomBytes } from "node:crypto";
+
 // ============================================================================
 // External Content Safety
 // ============================================================================
@@ -146,17 +148,56 @@ export function secureCompare(a: string, b: string): boolean {
 }
 
 /**
- * Generate a secure random token.
+ * Create a cryptographically secure random alphanumeric token.
+ *
+ * @param length - The desired token length in characters (default: 32)
+ * @returns A string of `length` characters containing only `A-Z`, `a-z`, and `0-9`
  */
 export function generateToken(length: number = 32): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const crypto = require("crypto");
-  const bytes = crypto.randomBytes(length);
+  const bytes = randomBytes(length);
   let token = "";
   for (let i = 0; i < length; i++) {
     token += chars[bytes[i] % chars.length];
   }
   return token;
+}
+
+// ============================================================================
+// GitHub Webhook Signature Verification
+// ============================================================================
+
+/**
+ * Verify a GitHub webhook payload's HMAC-SHA256 signature.
+ *
+ * @param payload - Raw request body as a Buffer used to compute the HMAC
+ * @param signature - Value of the `X-Hub-Signature-256` header (expected format: `sha256=<hex>`)
+ * @param secret - Webhook secret configured in GitHub
+ * @returns `true` if the header signature matches the computed HMAC, `false` otherwise.
+ */
+export function verifyGitHubSignature(
+  payload: Buffer,
+  signature: string | undefined,
+  secret: string
+): boolean {
+  if (!signature || !signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const expectedSig = signature.slice("sha256=".length).trim().toLowerCase();
+
+  // Validate hex format (64 chars for SHA256)
+  if (!/^[0-9a-f]{64}$/.test(expectedSig)) {
+    return false;
+  }
+
+  const computedSig = createHmac("sha256", secret)
+    .update(payload)
+    .digest("hex")
+    .toLowerCase();
+
+  // Use constant-time comparison to prevent timing attacks
+  return secureCompare(expectedSig, computedSig);
 }
 
 // ============================================================================

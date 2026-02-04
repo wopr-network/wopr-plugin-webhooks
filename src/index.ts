@@ -23,6 +23,7 @@ import type {
   HookMappingResult,
 } from "./types.js";
 import { resolveMappings, clearTransformCache, applyMappings } from "./mappings.js";
+import type { GitHubHookConfig } from "./types.js";
 import {
   extractToken,
   readJsonBody,
@@ -30,6 +31,7 @@ import {
   handleWake,
   handleAgent,
   handleMapped,
+  handleGitHub,
   sendJson,
   sendError,
   type WebhookHandlerContext,
@@ -94,15 +96,29 @@ function resolveConfig(
 
 // ============================================================================
 // HTTP Server
-// ============================================================================
+/**
+ * Create an HTTP server that accepts and routes webhook POST requests under the configured base path.
+ *
+ * The server enforces token-based authorization, applies the configured maximum request body size, and
+ * dispatches requests to built-in handlers ("wake", "agent", "github") or configured mappings. It also
+ * integrates GitHub signature verification and organization checks when `githubConfig` is provided.
+ *
+ * @param config - Resolved webhook configuration containing `basePath`, `token`, `maxBodyBytes`, and mappings
+ * @param githubConfig - Optional GitHub webhook configuration used for signature verification and org restrictions
+ * @param ctx - Plugin context used for injecting messages, emitting events, and routing logs/messages
+ * @param logger - Logger used for server-level warnings and errors
+ * @returns The created HTTP server instance that handles incoming webhook requests according to the configuration
+ */
 
 function createWebhookServer(
   config: WebhooksConfigResolved,
+  githubConfig: GitHubHookConfig | undefined,
   ctx: any,
   logger: Logger
 ): ReturnType<typeof createServer> {
   const handlerCtx: WebhookHandlerContext = {
     config,
+    githubConfig,
     inject: async (session, message, options) => {
       return ctx.inject(session, message, {
         from: "webhook",
@@ -167,6 +183,7 @@ function createWebhookServer(
       typeof bodyResult.value === "object" && bodyResult.value !== null
         ? (bodyResult.value as Record<string, unknown>)
         : {};
+    const rawBody = bodyResult.raw;
 
     // Route to handler
     const subPath = pathname.slice(config.basePath.length);
@@ -181,6 +198,25 @@ function createWebhookServer(
       } else if (normalizedSubPath === "agent") {
         result = await handleAgent(payload, handlerCtx);
         sendJson(res, 202, result); // 202 Accepted for async
+      } else if (normalizedSubPath === "github") {
+        // GitHub webhook with signature verification
+        const headers = normalizeHeaders(req);
+        result = await handleGitHub(payload, rawBody, headers, handlerCtx);
+
+        // If no target session configured, fall through to mapped handler
+        if (!result.ok && result.error === "no_target_session") {
+          result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
+        }
+
+        if (!result.ok) {
+          const status =
+            result.error === "Invalid signature" ? 401
+            : result.error === "Unauthorized organization" ? 403
+            : 400;
+          sendError(res, status, result.error || "Unknown error");
+        } else {
+          sendJson(res, 200, result);
+        }
       } else if (normalizedSubPath) {
         // Mapped hook
         const headers = normalizeHeaders(req);
@@ -317,11 +353,40 @@ const plugin: WOPRPlugin = {
       return;
     }
 
+    // Load GitHub config from main WOPR config (set by onboard wizard)
+    // The onboard wizard saves github.webhookSecret and github.prReviewSession
+    // to wopr.config.json, which we read here for signature verification and routing
+    let githubConfig: GitHubHookConfig | undefined;
+    try {
+      const mainConfig = ctx.getMainConfig?.() || {};
+      if (mainConfig.github) {
+        githubConfig = {
+          webhookSecret: mainConfig.github.webhookSecret,
+          prReviewSession: mainConfig.github.prReviewSession,
+          releaseSession: mainConfig.github.releaseSession,
+          allowedOrgs: mainConfig.github.orgs,
+        };
+        logger.info({
+          msg: "GitHub webhook config loaded",
+          hasSecret: !!githubConfig.webhookSecret,
+          prSession: githubConfig.prReviewSession,
+        });
+      }
+    } catch {
+      // No main config access, use plugin config
+      githubConfig = config.github;
+    }
+
+    // Fall back to plugin-level github config
+    if (!githubConfig && config.github) {
+      githubConfig = config.github;
+    }
+
     // Start HTTP server
     const port = config.port || DEFAULT_PORT;
     const host = config.host || "127.0.0.1";
 
-    server = createWebhookServer(resolvedConfig, ctx, logger);
+    server = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
     server.listen(port, host, () => {
       logger.info(`Webhooks server listening on http://${host}:${port}${resolvedConfig!.basePath}`);
     });
@@ -341,6 +406,7 @@ const plugin: WOPRPlugin = {
 
         const handlerCtx: WebhookHandlerContext = {
           config: resolvedConfig,
+          githubConfig,
           inject: async (session, message, options) => {
             return ctx.inject(session, message, {
               from: "webhook",
@@ -357,6 +423,23 @@ const plugin: WOPRPlugin = {
         };
 
         const url = new URL(`http://localhost${resolvedConfig.basePath}/${path}`);
+
+        // Special handling for GitHub webhooks
+        if (path === "github") {
+          // Extension calls don't have the original raw body bytes needed for signature verification.
+          // If a secret is configured, fail closed to avoid signature-bypass via the extension path.
+          if (githubConfig?.webhookSecret) {
+            return { ok: false, error: "GitHub webhooks with signature verification must use HTTP endpoint" };
+          }
+
+          if (githubConfig) {
+            const result = await handleGitHub(payload, JSON.stringify(payload), headers || {}, handlerCtx);
+            if (result.ok || result.error !== "no_target_session") {
+              return result;
+            }
+          }
+        }
+
         return handleMapped(path, payload, headers || {}, url, handlerCtx);
       },
 
