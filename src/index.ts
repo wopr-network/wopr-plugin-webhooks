@@ -410,14 +410,13 @@ const plugin: WOPRPlugin = {
 
         // Special handling for GitHub webhooks
         if (path === "github" && githubConfig) {
-          const signature = (headers || {})["x-hub-signature-256"];
-          // Extension calls typically don't have the original raw body bytes; don't attempt signature-based handling.
-          if (!signature) {
-            return handleMapped(path, payload, headers || {}, url, handlerCtx);
+          // Extension calls typically don't have the original raw body bytes needed for signature verification.
+          // If a secret is configured, fail closed to avoid signature-bypass via the extension path.
+          if (githubConfig.webhookSecret) {
+            return { ok: false, error: "Missing raw body for signature verification" };
           }
 
-          // If a signature header is present but we don't have the original raw body, fail closed.
-          return { ok: false, error: "Missing raw body for signature verification" };
+          return handleMapped(path, payload, headers || {}, url, handlerCtx);
         }
 
         return handleMapped(path, payload, headers || {}, url, handlerCtx);
