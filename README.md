@@ -16,32 +16,36 @@ Inspired by [OpenClaw's webhooks system](https://docs.openclaw.ai/automation/web
 ## Installation
 
 ```bash
-wopr plugin install /data/plugins/wopr-plugin-webhooks
+wopr plugin add github:wopr-network/wopr-plugin-webhooks
 ```
 
 ## Configuration
 
-Add to your WOPR config or create `~/.wopr/plugins/wopr-plugin-webhooks.json`:
+Add to your main WOPR config (`~/.wopr/config.json`) under the `webhooks` key:
 
 ```json
 {
-  "enabled": true,
-  "token": "your-secret-token",
-  "port": 7438,
-  "host": "127.0.0.1",
-  "path": "/hooks",
-  "presets": ["gmail", "github"],
-  "mappings": [
-    {
-      "id": "custom-hook",
-      "match": { "path": "myapp" },
-      "action": "agent",
-      "name": "MyApp",
-      "messageTemplate": "Event: {{event}} from {{user}}"
-    }
-  ]
+  "webhooks": {
+    "enabled": true,
+    "token": "your-secret-token",
+    "port": 7438,
+    "host": "0.0.0.0",
+    "path": "/hooks",
+    "presets": ["gmail", "github"],
+    "mappings": [
+      {
+        "id": "custom-hook",
+        "match": { "path": "myapp" },
+        "action": "agent",
+        "name": "MyApp",
+        "messageTemplate": "Event: {{event}} from {{user}}"
+      }
+    ]
+  }
 }
 ```
+
+> **Note:** Configuration goes in the main config's `webhooks` section, not in a plugin-specific config file.
 
 ## Endpoints
 
@@ -155,6 +159,8 @@ Enable with `"presets": ["slack"]`. Handles Slack event API webhooks.
   ]
 }
 ```
+
+> **Tip:** For external webhooks (GitHub, etc.) that expect fast responses, use `action: "agent"` with `wakeMode: "now"` instead of `action: "wake"`. The wake action is synchronous and waits for the full AI response, which can cause 504 timeouts from impatient webhook senders.
 
 ### Template Variables
 
