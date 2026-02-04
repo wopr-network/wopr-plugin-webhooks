@@ -409,14 +409,19 @@ const plugin: WOPRPlugin = {
         const url = new URL(`http://localhost${resolvedConfig.basePath}/${path}`);
 
         // Special handling for GitHub webhooks
-        if (path === "github" && githubConfig) {
-          // Extension calls typically don't have the original raw body bytes needed for signature verification.
+        if (path === "github") {
+          // Extension calls don't have the original raw body bytes needed for signature verification.
           // If a secret is configured, fail closed to avoid signature-bypass via the extension path.
-          if (githubConfig.webhookSecret) {
-            return { ok: false, error: "Missing raw body for signature verification" };
+          if (githubConfig?.webhookSecret) {
+            return { ok: false, error: "GitHub webhooks with signature verification must use HTTP endpoint" };
           }
 
-          return handleMapped(path, payload, headers || {}, url, handlerCtx);
+          if (githubConfig) {
+            const result = await handleGitHub(payload, JSON.stringify(payload), headers || {}, handlerCtx);
+            if (result.ok || result.error !== "no_target_session") {
+              return result;
+            }
+          }
         }
 
         return handleMapped(path, payload, headers || {}, url, handlerCtx);

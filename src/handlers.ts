@@ -575,7 +575,14 @@ export async function handleGitHub(
     return { ok: false, error: "Missing X-GitHub-Event header" };
   }
 
-  // Check allowed orgs if configured
+  // Handle ping event (sent on webhook creation/edit)
+  if (eventType === "ping") {
+    ctx.logger.info({ msg: "GitHub webhook ping received" });
+    await ctx.emit("webhook:github", { event: "ping" });
+    return { ok: true, action: "skipped" };
+  }
+
+  // Check allowed orgs if configured (fix nested owner access)
   const org = (payload.organization as Record<string, unknown>)?.login as string | undefined
     ?? ((payload.repository as Record<string, unknown>)?.owner as Record<string, unknown> | undefined)?.login as string | undefined;
 
@@ -607,9 +614,10 @@ export async function handleGitHub(
     const action = payload.action as string;
     const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
+    // Sanitize untrusted fields
     const safeAction = sanitizeString(action, 200);
     const safeRepo = sanitizeString(repo, 500);
-    const safePrNumber = sanitizeString(pr?.number, 50);
+    const safePrNumber = sanitizeString(String(pr?.number ?? ""), 50);
     const safeTitle = sanitizeString(pr?.title, 2000);
     const safeUser = sanitizeString((pr?.user as Record<string, unknown>)?.login, 200);
     const safeUrl = sanitizeString(pr?.html_url, 2000);
@@ -626,6 +634,7 @@ export async function handleGitHub(
     const action = payload.action as string;
     const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
+    // Sanitize untrusted fields
     const safeAction = sanitizeString(action, 200);
     const safeRepo = sanitizeString(repo, 500);
     const safeTag = sanitizeString(release?.tag_name, 200);
@@ -637,6 +646,7 @@ export async function handleGitHub(
       `Release: ${safeTag} - ${safeName}\n` +
       `URL: ${safeUrl}`;
   } else {
+    // Fall back to generic preset handling
     const safeAction = sanitizeString(payload.action, 200) || "event";
     const safeRepo = sanitizeString((payload.repository as Record<string, unknown>)?.full_name, 500);
 

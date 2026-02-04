@@ -4,6 +4,8 @@
  * Payload safety wrappers for untrusted external content.
  */
 
+import { createHmac, randomBytes } from "node:crypto";
+
 // ============================================================================
 // External Content Safety
 // ============================================================================
@@ -150,8 +152,7 @@ export function secureCompare(a: string, b: string): boolean {
  */
 export function generateToken(length: number = 32): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  const crypto = require("crypto");
-  const bytes = crypto.randomBytes(length);
+  const bytes = randomBytes(length);
   let token = "";
   for (let i = 0; i < length; i++) {
     token += chars[bytes[i] % chars.length];
@@ -184,13 +185,13 @@ export function verifyGitHubSignature(
   }
 
   const expectedSig = signature.slice("sha256=".length).trim().toLowerCase();
+
+  // Validate hex format (64 chars for SHA256)
   if (!/^[0-9a-f]{64}$/.test(expectedSig)) {
     return false;
   }
 
-  const crypto = require("crypto");
-  const computedSig = crypto
-    .createHmac("sha256", secret)
+  const computedSig = createHmac("sha256", secret)
     .update(payload, "utf8")
     .digest("hex")
     .toLowerCase();
