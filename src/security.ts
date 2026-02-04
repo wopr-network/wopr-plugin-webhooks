@@ -176,7 +176,7 @@ export function generateToken(length: number = 32): string {
  * @returns true if signature is valid
  */
 export function verifyGitHubSignature(
-  payload: string,
+  payload: Buffer,
   signature: string | undefined,
   secret: string
 ): boolean {
@@ -192,7 +192,7 @@ export function verifyGitHubSignature(
   }
 
   const computedSig = createHmac("sha256", secret)
-    .update(payload, "utf8")
+    .update(payload)
     .digest("hex")
     .toLowerCase();
 
