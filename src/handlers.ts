@@ -99,6 +99,16 @@ export interface RawBodyResult {
   raw: string;
 }
 
+/**
+ * Read and parse a JSON HTTP request body up to a size limit, returning the parsed value and the raw body.
+ *
+ * Trims the body before parsing; an empty or whitespace-only body is treated as `{}`. If the accumulated
+ * payload exceeds `maxBytes`, parsing is aborted and a size error is returned.
+ *
+ * @param req - The incoming HTTP request to read the body from
+ * @param maxBytes - Maximum allowed payload size in bytes; reading stops with an error if exceeded
+ * @returns On success: an object with `ok: true`, `value` containing the parsed JSON (or `{}` for empty body), and `raw` containing the raw body string. On failure: an object with `ok: false` and an `error` string describing the problem.
+ */
 export async function readJsonBody(
   req: IncomingMessage,
   maxBytes: number
@@ -472,6 +482,26 @@ interface AgentRunConfig {
   allowUnsafeExternalContent?: boolean;
 }
 
+/**
+ * Run an agent message in the specified session and emit webhook lifecycle events.
+ *
+ * Injects `config.message` into `config.sessionKey`, logs start and completion, and:
+ * - emits `webhook:agent:response` with delivery details when `config.deliver` is true and `config.channel` is provided;
+ * - emits `webhook:agent:error` on failure.
+ *
+ * @param config - Agent run options including:
+ *   - `message`: the message text to send to the agent
+ *   - `name`: display name for the agent/run
+ *   - `sessionKey`: session to inject the message into
+ *   - `deliver`: whether to emit a delivery event when a response is produced
+ *   - `channel`: delivery channel identifier (required for emission)
+ *   - `to`: optional target recipient metadata for delivery events
+ *   - `model`: optional model hint for the injection
+ *   - `thinking`: optional thinking metadata for the injection
+ *   - `timeoutSeconds`: optional request timeout in seconds
+ *   - `allowUnsafeExternalContent`: if true, do not wrap external content with safety boundaries
+ * @param ctx - Webhook handler context used for injection, logging, and event emission
+ */
 async function runAgentAsync(
   config: AgentRunConfig,
   ctx: WebhookHandlerContext
@@ -544,12 +574,15 @@ async function runAgentAsync(
 // ============================================================================
 
 /**
- * Handle GitHub webhooks with signature verification and config-based routing.
+ * Handle GitHub webhook events with optional signature verification, organization filtering, and routing to configured sessions.
  *
- * This handler:
- * 1. Verifies the X-Hub-Signature-256 header using the configured webhook secret
- * 2. Routes PR events to the configured prReviewSession
- * 3. Optionally filters by allowed organizations
+ * Verifies the X-Hub-Signature-256 header when a webhook secret is configured, enforces allowed organizations if set, translates common GitHub events (pull_request, pull_request_review, release, and generic events) into a sanitized message, and injects that message into the configured target session (e.g., prReviewSession or releaseSession).
+ *
+ * @param payload - Parsed JSON payload of the webhook
+ * @param rawBody - Raw request body (UTF-8) used for signature verification
+ * @param headers - Normalized request headers (expects `x-hub-signature-256` and `x-github-event`)
+ * @param ctx - Webhook handler context with config, inject/emit helpers, and logger
+ * @returns A WebhookResponse describing the outcome; `ok: true` with `action` and `sessionKey` when delivered or skipped, `ok: false` with an `error` message on failure or when no target session is configured.
  */
 export async function handleGitHub(
   payload: Record<string, unknown>,

@@ -96,7 +96,19 @@ function resolveConfig(
 
 // ============================================================================
 // HTTP Server
-// ============================================================================
+/**
+ * Create an HTTP server that accepts and routes webhook POST requests under the configured base path.
+ *
+ * The server enforces token-based authorization, applies the configured maximum request body size, and
+ * dispatches requests to built-in handlers ("wake", "agent", "github") or configured mappings. It also
+ * integrates GitHub signature verification and organization checks when `githubConfig` is provided.
+ *
+ * @param config - Resolved webhook configuration containing `basePath`, `token`, `maxBodyBytes`, and mappings
+ * @param githubConfig - Optional GitHub webhook configuration used for signature verification and org restrictions
+ * @param ctx - Plugin context used for injecting messages, emitting events, and routing logs/messages
+ * @param logger - Logger used for server-level warnings and errors
+ * @returns The created HTTP server instance that handles incoming webhook requests according to the configuration
+ */
 
 function createWebhookServer(
   config: WebhooksConfigResolved,
