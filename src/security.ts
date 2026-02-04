@@ -160,6 +160,41 @@ export function generateToken(length: number = 32): string {
 }
 
 // ============================================================================
+// GitHub Webhook Signature Verification
+// ============================================================================
+
+/**
+ * Verify GitHub webhook signature (HMAC-SHA256).
+ *
+ * GitHub sends the signature in the X-Hub-Signature-256 header as:
+ * sha256=<hex-encoded-hmac>
+ *
+ * @param payload - Raw request body as string
+ * @param signature - Value of X-Hub-Signature-256 header
+ * @param secret - Webhook secret configured in GitHub
+ * @returns true if signature is valid
+ */
+export function verifyGitHubSignature(
+  payload: string,
+  signature: string | undefined,
+  secret: string
+): boolean {
+  if (!signature || !signature.startsWith("sha256=")) {
+    return false;
+  }
+
+  const crypto = require("crypto");
+  const expectedSig = signature.slice("sha256=".length);
+  const computedSig = crypto
+    .createHmac("sha256", secret)
+    .update(payload, "utf8")
+    .digest("hex");
+
+  // Use constant-time comparison to prevent timing attacks
+  return secureCompare(expectedSig, computedSig);
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 

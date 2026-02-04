@@ -38,6 +38,21 @@ export interface WebhooksConfig {
 
   /** Per-preset configuration */
   gmail?: GmailHookConfig;
+  github?: GitHubHookConfig;
+}
+
+export interface GitHubHookConfig {
+  /** Webhook secret for signature verification (from wopr.config.json github.webhookSecret) */
+  webhookSecret?: string;
+
+  /** Session to route PR events to (from wopr.config.json github.prReviewSession) */
+  prReviewSession?: string;
+
+  /** Session to route release events to */
+  releaseSession?: string;
+
+  /** Organizations to accept webhooks from (empty = accept all) */
+  allowedOrgs?: string[];
 }
 
 export interface GmailHookConfig {

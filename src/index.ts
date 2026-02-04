@@ -23,6 +23,7 @@ import type {
   HookMappingResult,
 } from "./types.js";
 import { resolveMappings, clearTransformCache, applyMappings } from "./mappings.js";
+import type { GitHubHookConfig } from "./types.js";
 import {
   extractToken,
   readJsonBody,
@@ -30,6 +31,7 @@ import {
   handleWake,
   handleAgent,
   handleMapped,
+  handleGitHub,
   sendJson,
   sendError,
   type WebhookHandlerContext,
@@ -98,11 +100,13 @@ function resolveConfig(
 
 function createWebhookServer(
   config: WebhooksConfigResolved,
+  githubConfig: GitHubHookConfig | undefined,
   ctx: any,
   logger: Logger
 ): ReturnType<typeof createServer> {
   const handlerCtx: WebhookHandlerContext = {
     config,
+    githubConfig,
     inject: async (session, message, options) => {
       return ctx.inject(session, message, {
         from: "webhook",
@@ -167,6 +171,7 @@ function createWebhookServer(
       typeof bodyResult.value === "object" && bodyResult.value !== null
         ? (bodyResult.value as Record<string, unknown>)
         : {};
+    const rawBody = bodyResult.raw;
 
     // Route to handler
     const subPath = pathname.slice(config.basePath.length);
@@ -181,6 +186,21 @@ function createWebhookServer(
       } else if (normalizedSubPath === "agent") {
         result = await handleAgent(payload, handlerCtx);
         sendJson(res, 202, result); // 202 Accepted for async
+      } else if (normalizedSubPath === "github") {
+        // GitHub webhook with signature verification
+        const headers = normalizeHeaders(req);
+        result = await handleGitHub(payload, rawBody, headers, handlerCtx);
+
+        // If no target session configured, fall through to mapped handler
+        if (!result.ok && result.error === "no_target_session") {
+          result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
+        }
+
+        if (!result.ok) {
+          sendError(res, 400, result.error || "Unknown error");
+        } else {
+          sendJson(res, 200, result);
+        }
       } else if (normalizedSubPath) {
         // Mapped hook
         const headers = normalizeHeaders(req);
@@ -317,11 +337,40 @@ const plugin: WOPRPlugin = {
       return;
     }
 
+    // Load GitHub config from main WOPR config (set by onboard wizard)
+    // The onboard wizard saves github.webhookSecret and github.prReviewSession
+    // to wopr.config.json, which we read here for signature verification and routing
+    let githubConfig: GitHubHookConfig | undefined;
+    try {
+      const mainConfig = ctx.getMainConfig?.() || {};
+      if (mainConfig.github) {
+        githubConfig = {
+          webhookSecret: mainConfig.github.webhookSecret,
+          prReviewSession: mainConfig.github.prReviewSession,
+          releaseSession: mainConfig.github.releaseSession,
+          allowedOrgs: mainConfig.github.orgs,
+        };
+        logger.info({
+          msg: "GitHub webhook config loaded",
+          hasSecret: !!githubConfig.webhookSecret,
+          prSession: githubConfig.prReviewSession,
+        });
+      }
+    } catch {
+      // No main config access, use plugin config
+      githubConfig = config.github;
+    }
+
+    // Fall back to plugin-level github config
+    if (!githubConfig && config.github) {
+      githubConfig = config.github;
+    }
+
     // Start HTTP server
     const port = config.port || DEFAULT_PORT;
     const host = config.host || "127.0.0.1";
 
-    server = createWebhookServer(resolvedConfig, ctx, logger);
+    server = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
     server.listen(port, host, () => {
       logger.info(`Webhooks server listening on http://${host}:${port}${resolvedConfig!.basePath}`);
     });
@@ -341,6 +390,7 @@ const plugin: WOPRPlugin = {
 
         const handlerCtx: WebhookHandlerContext = {
           config: resolvedConfig,
+          githubConfig,
           inject: async (session, message, options) => {
             return ctx.inject(session, message, {
               from: "webhook",
@@ -357,6 +407,15 @@ const plugin: WOPRPlugin = {
         };
 
         const url = new URL(`http://localhost${resolvedConfig.basePath}/${path}`);
+
+        // Special handling for GitHub webhooks
+        if (path === "github" && githubConfig) {
+          const result = await handleGitHub(payload, JSON.stringify(payload), headers || {}, handlerCtx);
+          if (result.ok || result.error !== "no_target_session") {
+            return result;
+          }
+        }
+
         return handleMapped(path, payload, headers || {}, url, handlerCtx);
       },
 
