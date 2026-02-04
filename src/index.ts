@@ -201,7 +201,6 @@ function createWebhookServer(
             result.error === "Invalid signature" ? 401
             : result.error === "Unauthorized organization" ? 403
             : 400;
-
           sendError(res, status, result.error || "Unknown error");
         } else {
           sendJson(res, 200, result);
