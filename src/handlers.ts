@@ -583,6 +583,7 @@ async function runAgentAsync(
  * @param headers - Normalized request headers (expects `x-hub-signature-256` and `x-github-event`)
  * @param ctx - Webhook handler context with config, inject/emit helpers, and logger
  * @returns A WebhookResponse describing the outcome; `ok: true` with `action` and `sessionKey` when delivered or skipped, `ok: false` with an `error` message on failure or when no target session is configured.
+ */
 export async function handleGitHub(
   payload: Record<string, unknown>,
   rawBody: string,
