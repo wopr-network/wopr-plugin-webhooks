@@ -593,6 +593,13 @@ export async function handleGitHub(
   let targetSession: string | undefined;
   let message: string;
 
+  // GitHub webhook "ping" (sent on creation/edit) should succeed without routing
+  if (eventType === "ping") {
+    ctx.logger.info({ msg: "GitHub webhook ping received" });
+    await ctx.emit("webhook:github", { event: "ping" });
+    return { ok: true, action: "skipped" };
+  }
+
   if (eventType === "pull_request" || eventType === "pull_request_review") {
     targetSession = githubConfig?.prReviewSession;
     const pr = payload.pull_request as Record<string, unknown> | undefined;
