@@ -596,11 +596,18 @@ export async function handleGitHub(
     const action = payload.action as string;
     const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
-    message = `GitHub ${eventType}: ${action}\n` +
-      `Repository: ${repo}\n` +
-      `PR #${pr?.number}: ${pr?.title}\n` +
-      `By: ${(pr?.user as Record<string, unknown>)?.login}\n` +
-      `URL: ${pr?.html_url}`;
+    const safeAction = sanitizeString(action, 200);
+    const safeRepo = sanitizeString(repo, 500);
+    const safePrNumber = sanitizeString(pr?.number, 50);
+    const safeTitle = sanitizeString(pr?.title, 2000);
+    const safeUser = sanitizeString((pr?.user as Record<string, unknown>)?.login, 200);
+    const safeUrl = sanitizeString(pr?.html_url, 2000);
+
+    message = `GitHub ${eventType}: ${safeAction}\n` +
+      `Repository: ${safeRepo}\n` +
+      `PR #${safePrNumber}: ${safeTitle}\n` +
+      `By: ${safeUser}\n` +
+      `URL: ${safeUrl}`;
   } else if (eventType === "release") {
     targetSession = githubConfig?.releaseSession;
     const release = payload.release as Record<string, unknown> | undefined;
