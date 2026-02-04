@@ -602,6 +602,7 @@ export async function handleGitHub(
 
   if (eventType === "pull_request" || eventType === "pull_request_review") {
     targetSession = githubConfig?.prReviewSession;
+
     const pr = payload.pull_request as Record<string, unknown> | undefined;
     const action = payload.action as string;
     const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
@@ -618,29 +619,29 @@ export async function handleGitHub(
       `PR #${safePrNumber}: ${safeTitle}\n` +
       `By: ${safeUser}\n` +
       `URL: ${safeUrl}`;
-        const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
-        const action = payload.action as string;
+  } else if (eventType === "release") {
+    targetSession = githubConfig?.releaseSession;
 
-        const safeAction = sanitizeString(action, 200);
-        const safeRepo = sanitizeString(repo, 500);
-        const safeTag = sanitizeString(release?.tag_name, 200);
-        const safeName = sanitizeString(release?.name, 500);
-        const safeUrl = sanitizeString(release?.html_url, 2000);
+    const release = payload.release as Record<string, unknown> | undefined;
+    const action = payload.action as string;
+    const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
-        message = `GitHub release: ${safeAction}\n` +
-          `Repository: ${safeRepo}\n` +
-          `Release: ${safeTag} - ${safeName}\n` +
-          `URL: ${safeUrl}`;
-      } else {
-        // Fall back to generic preset handling
-        const safeAction = sanitizeString(payload.action, 200) || "event";
-        const safeRepo = sanitizeString((payload.repository as Record<string, unknown>)?.full_name, 500);
+    const safeAction = sanitizeString(action, 200);
+    const safeRepo = sanitizeString(repo, 500);
+    const safeTag = sanitizeString(release?.tag_name, 200);
+    const safeName = sanitizeString(release?.name, 500);
+    const safeUrl = sanitizeString(release?.html_url, 2000);
 
-        message = `GitHub ${eventType}: ${safeAction}\n` +
-          `Repository: ${safeRepo}`;
-      }
-    message = `GitHub ${eventType}: ${payload.action || "event"}\n` +
-      `Repository: ${(payload.repository as Record<string, unknown>)?.full_name}`;
+    message = `GitHub release: ${safeAction}\n` +
+      `Repository: ${safeRepo}\n` +
+      `Release: ${safeTag} - ${safeName}\n` +
+      `URL: ${safeUrl}`;
+  } else {
+    const safeAction = sanitizeString(payload.action, 200) || "event";
+    const safeRepo = sanitizeString((payload.repository as Record<string, unknown>)?.full_name, 500);
+
+    message = `GitHub ${eventType}: ${safeAction}\n` +
+      `Repository: ${safeRepo}`;
   }
 
   if (!targetSession) {
