@@ -583,8 +583,8 @@ export async function handleGitHub(
   }
 
   // Check allowed orgs if configured (fix nested owner access)
-  const org = (payload.organization as Record<string, unknown>)?.login as string | undefined
-    ?? ((payload.repository as Record<string, unknown>)?.owner as Record<string, unknown> | undefined)?.login as string | undefined;
+  const org = (payload.organization as Record<string, unknown> | undefined)?.login as string | undefined
+    ?? (payload.repository as Record<string, unknown> | undefined)?.owner?.login as string | undefined;
 
   if (githubConfig?.allowedOrgs && githubConfig.allowedOrgs.length > 0) {
     const normalizedOrg = (org || "").trim().toLowerCase();
