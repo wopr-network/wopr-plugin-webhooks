@@ -331,8 +331,8 @@ const plugin: WOPRPlugin = {
       debug: (msg) => ctx.log.debug?.(typeof msg === "string" ? msg : JSON.stringify(msg)),
     };
 
-    // Load config
-    const config = ctx.getConfig() as WebhooksConfig | undefined;
+    // Load config from main config (webhooks section, not plugin-specific)
+    const config = ctx.getMainConfig?.("webhooks") as WebhooksConfig | undefined;
     if (!config?.enabled) {
       logger.info("Webhooks plugin loaded (disabled - set webhooks.enabled: true in config)");
       return;
