@@ -580,7 +580,10 @@ export async function handleGitHub(
     ?? ((payload.repository as Record<string, unknown>)?.owner as Record<string, unknown> | undefined)?.login as string | undefined;
 
   if (githubConfig?.allowedOrgs && githubConfig.allowedOrgs.length > 0) {
-    if (!org || !githubConfig.allowedOrgs.includes(org)) {
+    const normalizedOrg = (org || "").trim().toLowerCase();
+    const allowed = githubConfig.allowedOrgs.map((o) => o.trim().toLowerCase());
+
+    if (!normalizedOrg || !allowed.includes(normalizedOrg)) {
       ctx.logger.warn({ msg: "GitHub webhook from unauthorized org", org });
       return { ok: false, error: "Unauthorized organization" };
     }
