@@ -410,10 +410,14 @@ const plugin: WOPRPlugin = {
 
         // Special handling for GitHub webhooks
         if (path === "github" && githubConfig) {
-          const result = await handleGitHub(payload, JSON.stringify(payload), headers || {}, handlerCtx);
-          if (result.ok || result.error !== "no_target_session") {
-            return result;
+          const signature = (headers || {})["x-hub-signature-256"];
+          // Extension calls typically don't have the original raw body bytes; don't attempt signature-based handling.
+          if (!signature) {
+            return handleMapped(path, payload, headers || {}, url, handlerCtx);
           }
+
+          // If a signature header is present but we don't have the original raw body, fail closed.
+          return { ok: false, error: "Missing raw body for signature verification" };
         }
 
         return handleMapped(path, payload, headers || {}, url, handlerCtx);
