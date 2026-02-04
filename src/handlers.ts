@@ -577,7 +577,7 @@ export async function handleGitHub(
 
   // Check allowed orgs if configured
   const org = (payload.organization as Record<string, unknown>)?.login as string | undefined
-    ?? (payload.repository as Record<string, unknown>)?.owner?.login as string | undefined;
+    ?? ((payload.repository as Record<string, unknown>)?.owner as Record<string, unknown> | undefined)?.login as string | undefined;
 
   if (githubConfig?.allowedOrgs && githubConfig.allowedOrgs.length > 0) {
     if (!org || !githubConfig.allowedOrgs.includes(org)) {
