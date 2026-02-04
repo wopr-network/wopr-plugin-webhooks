@@ -148,7 +148,10 @@ export function secureCompare(a: string, b: string): boolean {
 }
 
 /**
- * Generate a secure random token.
+ * Create a cryptographically secure random alphanumeric token.
+ *
+ * @param length - The desired token length in characters (default: 32)
+ * @returns A string of `length` characters containing only `A-Z`, `a-z`, and `0-9`
  */
 export function generateToken(length: number = 32): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
@@ -165,15 +168,12 @@ export function generateToken(length: number = 32): string {
 // ============================================================================
 
 /**
- * Verify GitHub webhook signature (HMAC-SHA256).
+ * Verify a GitHub webhook payload's HMAC-SHA256 signature.
  *
- * GitHub sends the signature in the X-Hub-Signature-256 header as:
- * sha256=<hex-encoded-hmac>
- *
- * @param payload - Raw request body as string
- * @param signature - Value of X-Hub-Signature-256 header
+ * @param payload - Raw request body as a Buffer used to compute the HMAC
+ * @param signature - Value of the `X-Hub-Signature-256` header (expected format: `sha256=<hex>`)
  * @param secret - Webhook secret configured in GitHub
- * @returns true if signature is valid
+ * @returns `true` if the header signature matches the computed HMAC, `false` otherwise.
  */
 export function verifyGitHubSignature(
   payload: Buffer,
