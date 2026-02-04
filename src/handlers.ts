@@ -562,7 +562,7 @@ export async function handleGitHub(
   // Verify signature if secret is configured
   if (githubConfig?.webhookSecret) {
     const signature = headers["x-hub-signature-256"];
-    if (!verifyGitHubSignature(rawBody, signature, githubConfig.webhookSecret)) {
+    if (!verifyGitHubSignature(Buffer.from(rawBody, "utf-8"), signature, githubConfig.webhookSecret)) {
       ctx.logger.warn({ msg: "GitHub webhook signature verification failed" });
       return { ok: false, error: "Invalid signature" };
     }
