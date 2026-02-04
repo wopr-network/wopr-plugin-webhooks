@@ -183,12 +183,17 @@ export function verifyGitHubSignature(
     return false;
   }
 
-import { createHmac } from "node:crypto";
-  const expectedSig = signature.slice("sha256=".length);
+  const expectedSig = signature.slice("sha256=".length).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(expectedSig)) {
+    return false;
+  }
+
+  const crypto = require("crypto");
   const computedSig = crypto
     .createHmac("sha256", secret)
     .update(payload, "utf8")
-    .digest("hex");
+    .digest("hex")
+    .toLowerCase();
 
   // Use constant-time comparison to prevent timing attacks
   return secureCompare(expectedSig, computedSig);
