@@ -183,7 +183,7 @@ export function verifyGitHubSignature(
     return false;
   }
 
-  const crypto = require("crypto");
+import { createHmac } from "node:crypto";
   const expectedSig = signature.slice("sha256=".length);
   const computedSig = crypto
     .createHmac("sha256", secret)
