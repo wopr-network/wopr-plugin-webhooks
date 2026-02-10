@@ -3,8 +3,6 @@ name: Claude Code Review
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-  push:
-    branches: ['**']
   issue_comment:
     types: [created]
   pull_request_review_comment:
@@ -14,7 +12,6 @@ jobs:
   claude:
     if: |
       github.event_name == 'pull_request' ||
-      github.event_name == 'push' ||
       (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
     runs-on: [self-hosted, Linux, X64]
