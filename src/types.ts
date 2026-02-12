@@ -334,6 +334,12 @@ export interface WebhooksExtension {
   /** Get resolved config */
   getConfig(): WebhooksConfigResolved | null;
 
+  /** Get the port the webhooks server is listening on */
+  getPort(): number | null;
+
+  /** Get the full public URL if exposed via funnel (e.g. https://host.tailnet.ts.net/hooks) */
+  getPublicUrl(): string | null;
+
   /** Handle a webhook request programmatically */
   handleWebhook(
     path: string,
@@ -353,4 +359,13 @@ export interface WebhooksConfigResolved {
   token: string;
   maxBodyBytes: number;
   mappings: HookMappingResolved[];
+}
+
+// ============================================================================
+// External Extension Interfaces
+// ============================================================================
+
+export interface FunnelExtension {
+  isAvailable(): Promise<boolean>;
+  expose(port: number): Promise<string | null>;
 }
