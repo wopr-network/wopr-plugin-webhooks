@@ -53,12 +53,7 @@ export interface Logger {
 // Token Extraction
 // ============================================================================
 
-export interface TokenResult {
-  token: string | undefined;
-  fromQuery: boolean;
-}
-
-export function extractToken(req: IncomingMessage, url: URL): TokenResult {
+export function extractToken(req: IncomingMessage): string | undefined {
   // Bearer token (preferred)
   const auth =
     typeof req.headers.authorization === "string"
@@ -67,7 +62,7 @@ export function extractToken(req: IncomingMessage, url: URL): TokenResult {
   if (auth.toLowerCase().startsWith("bearer ")) {
     const token = auth.slice(7).trim();
     if (token) {
-      return { token, fromQuery: false };
+      return token;
     }
   }
 
@@ -77,16 +72,10 @@ export function extractToken(req: IncomingMessage, url: URL): TokenResult {
       ? req.headers["x-wopr-token"].trim()
       : "";
   if (headerToken) {
-    return { token: headerToken, fromQuery: false };
+    return headerToken;
   }
 
-  // Query param (deprecated)
-  const queryToken = url.searchParams.get("token");
-  if (queryToken) {
-    return { token: queryToken.trim(), fromQuery: true };
-  }
-
-  return { token: undefined, fromQuery: false };
+  return undefined;
 }
 
 // ============================================================================
