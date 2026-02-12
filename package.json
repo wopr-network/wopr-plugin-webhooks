@@ -14,7 +14,7 @@
   ],
   "license": "MIT",
   "main": "dist/index.js",
-  "name": "wopr-plugin-webhooks",
+  "name": "@wopr-network/wopr-plugin-webhooks",
   "scripts": {
     "build": "tsc",
     "check": "biome check src/ && tsc --noEmit",
@@ -22,7 +22,8 @@
     "dev": "tsc --watch",
     "format": "biome format --write src/",
     "lint": "biome check src/",
-    "lint:fix": "biome check --fix src/"
+    "lint:fix": "biome check --fix src/",
+    "prepublishOnly": "npm run build"
   },
   "type": "module",
   "types": "dist/index.d.ts",
@@ -34,5 +35,11 @@
   },
   "dependencies": {
     "@wopr-network/plugin-types": "^0.1.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ]
 }
