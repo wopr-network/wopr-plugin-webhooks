@@ -15,7 +15,6 @@
   "license": "MIT",
   "main": "dist/index.js",
   "name": "wopr-plugin-webhooks",
-  "peerDependencies": {},
   "scripts": {
     "build": "tsc",
     "check": "biome check src/ && tsc --noEmit",
@@ -32,5 +31,8 @@
     "plugin": {
       "entry": "dist/index.js"
     }
+  },
+  "dependencies": {
+    "@wopr-network/plugin-types": "^0.1.0"
   }
 }

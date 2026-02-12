@@ -14,18 +14,18 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
 import type {
   WebhooksConfig,
   WebhooksConfigResolved,
   WebhooksExtension,
   FunnelExtension,
-  HookMappingResolved,
   WebhookResponse,
   HookMappingContext,
   HookMappingResult,
+  GitHubHookConfig,
 } from "./types.js";
 import { resolveMappings, clearTransformCache, applyMappings } from "./mappings.js";
-import type { GitHubHookConfig } from "./types.js";
 import {
   extractToken,
   readJsonBody,
@@ -54,7 +54,7 @@ const DEFAULT_MAX_BODY_BYTES = 256 * 1024; // 256KB
 
 let server: ReturnType<typeof createServer> | null = null;
 let resolvedConfig: WebhooksConfigResolved | null = null;
-let pluginContext: any = null;
+let pluginContext: WOPRPluginContext | null = null;
 let listeningPort: number | null = null;
 let publicUrl: string | null = null;
 
@@ -117,7 +117,7 @@ function resolveConfig(
 function createWebhookServer(
   config: WebhooksConfigResolved,
   githubConfig: GitHubHookConfig | undefined,
-  ctx: any,
+  ctx: WOPRPluginContext,
   logger: Logger
 ): ReturnType<typeof createServer> {
   const handlerCtx: WebhookHandlerContext = {
@@ -133,7 +133,7 @@ function createWebhookServer(
       ctx.logMessage(session, message, { from: "webhook", ...options });
     },
     emit: async (event, payload) => {
-      await ctx.events.emit(event, payload);
+      await ctx.events.emitCustom(event, payload);
     },
     logger,
   };
@@ -247,20 +247,6 @@ function createWebhookServer(
 // Plugin Definition
 // ============================================================================
 
-interface WOPRPlugin {
-  name: string;
-  version: string;
-  description?: string;
-  commands?: Array<{
-    name: string;
-    description: string;
-    usage?: string;
-    handler: (ctx: any, args: string[]) => Promise<void>;
-  }>;
-  init?(ctx: any): Promise<void>;
-  shutdown?(): Promise<void>;
-}
-
 const plugin: WOPRPlugin = {
   name: "wopr-plugin-webhooks",
   version: "1.0.0",
@@ -271,7 +257,7 @@ const plugin: WOPRPlugin = {
       name: "webhooks",
       description: "Webhook management commands",
       usage: "wopr webhooks <status|test|mappings>",
-      async handler(ctx: any, args: string[]) {
+      async handler(ctx: WOPRPluginContext, args: string[]) {
         const [subcommand, ...rest] = args;
 
         if (subcommand === "status") {
@@ -326,7 +312,7 @@ const plugin: WOPRPlugin = {
     },
   ],
 
-  async init(ctx: any) {
+  async init(ctx: WOPRPluginContext) {
     pluginContext = ctx;
     const logger: Logger = {
       info: (msg) => ctx.log.info(typeof msg === "string" ? msg : JSON.stringify(msg)),
@@ -362,13 +348,13 @@ const plugin: WOPRPlugin = {
     // to wopr.config.json, which we read here for signature verification and routing
     let githubConfig: GitHubHookConfig | undefined;
     try {
-      const mainConfig = ctx.getMainConfig?.() || {};
+      const mainConfig = (ctx.getMainConfig?.() || {}) as Record<string, Record<string, unknown>>;
       if (mainConfig.github) {
         githubConfig = {
-          webhookSecret: mainConfig.github.webhookSecret,
-          prReviewSession: mainConfig.github.prReviewSession,
-          releaseSession: mainConfig.github.releaseSession,
-          allowedOrgs: mainConfig.github.orgs,
+          webhookSecret: mainConfig.github.webhookSecret as string | undefined,
+          prReviewSession: mainConfig.github.prReviewSession as string | undefined,
+          releaseSession: mainConfig.github.releaseSession as string | undefined,
+          allowedOrgs: mainConfig.github.orgs as string[] | undefined,
         };
         logger.info({
           msg: "GitHub webhook config loaded",
@@ -448,7 +434,7 @@ const plugin: WOPRPlugin = {
             ctx.logMessage(session, message, { from: "webhook", ...options });
           },
           emit: async (event, eventPayload) => {
-            await ctx.events.emit(event, eventPayload);
+            await ctx.events.emitCustom(event, eventPayload);
           },
           logger,
         };
@@ -501,14 +487,14 @@ const plugin: WOPRPlugin = {
     ctx.registerExtension("webhooks", extension);
 
     // Emit ready event for downstream plugins
-    await ctx.events.emit("webhooks:ready", {
+    await ctx.events.emitCustom("webhooks:ready", {
       port: listeningPort,
       basePath: resolvedConfig.basePath,
       publicUrl,
     });
 
     // Subscribe to events for channel delivery
-    ctx.events.on("webhook:agent:response", async (event: any) => {
+    (ctx.events as any).on("webhook:agent:response", async (event: any) => {
       const { sessionKey, name, response, channel, to } = event;
 
       if (!channel || channel === "last") {
