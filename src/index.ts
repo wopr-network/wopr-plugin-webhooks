@@ -17,6 +17,7 @@ import type {
   WebhooksConfig,
   WebhooksConfigResolved,
   WebhooksExtension,
+  FunnelExtension,
   HookMappingResolved,
   WebhookResponse,
   HookMappingContext,
@@ -53,6 +54,8 @@ const DEFAULT_MAX_BODY_BYTES = 256 * 1024; // 256KB
 let server: ReturnType<typeof createServer> | null = null;
 let resolvedConfig: WebhooksConfigResolved | null = null;
 let pluginContext: any = null;
+let listeningPort: number | null = null;
+let publicUrl: string | null = null;
 
 // ============================================================================
 // Config Resolution
@@ -386,14 +389,45 @@ const plugin: WOPRPlugin = {
     const port = config.port || DEFAULT_PORT;
     const host = config.host || "127.0.0.1";
 
-    server = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
-    server.listen(port, host, () => {
-      logger.info(`Webhooks server listening on http://${host}:${port}${resolvedConfig!.basePath}`);
+    const srv = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
+    server = srv;
+
+    await new Promise<void>((resolve) => {
+      srv.listen(port, host, () => {
+        listeningPort = port;
+        logger.info(`Webhooks server listening on http://${host}:${port}${resolvedConfig!.basePath}`);
+        resolve();
+      });
+    });
+
+    // Auto-expose via tailscale funnel if available
+    try {
+      const funnel = ctx.getExtension?.("funnel") as FunnelExtension | undefined;
+      if (funnel && (await funnel.isAvailable())) {
+        const url = await funnel.expose(port);
+        if (url) {
+          publicUrl = `${url}${resolvedConfig.basePath}`;
+          logger.info(`Webhooks publicly accessible at ${publicUrl}`);
+        }
+      } else {
+        logger.debug("Funnel extension not available; webhooks accessible locally only");
+      }
+    } catch (err) {
+      logger.debug(`Funnel auto-expose failed (non-fatal): ${err}`);
+    }
+
+    // Emit ready event for downstream plugins
+    await ctx.events.emit("webhooks:ready", {
+      port,
+      basePath: resolvedConfig.basePath,
+      publicUrl,
     });
 
     // Register extension for CLI and other plugins
     const extension: WebhooksExtension = {
       getConfig: () => resolvedConfig,
+      getPort: () => listeningPort,
+      getPublicUrl: () => publicUrl,
 
       async handleWebhook(
         path: string,
@@ -510,6 +544,8 @@ const plugin: WOPRPlugin = {
       server = null;
     }
     resolvedConfig = null;
+    listeningPort = null;
+    publicUrl = null;
     clearTransformCache();
     pluginContext?.unregisterExtension("webhooks");
     pluginContext = null;
