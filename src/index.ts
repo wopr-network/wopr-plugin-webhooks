@@ -13,6 +13,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import type {
   WebhooksConfig,
   WebhooksConfigResolved,
@@ -392,10 +393,12 @@ const plugin: WOPRPlugin = {
     const srv = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
     server = srv;
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
+      srv.once("error", reject);
       srv.listen(port, host, () => {
-        listeningPort = port;
-        logger.info(`Webhooks server listening on http://${host}:${port}${resolvedConfig!.basePath}`);
+        srv.removeListener("error", reject);
+        listeningPort = (srv.address() as AddressInfo).port;
+        logger.info(`Webhooks server listening on http://${host}:${listeningPort}${resolvedConfig!.basePath}`);
         resolve();
       });
     });
@@ -404,7 +407,7 @@ const plugin: WOPRPlugin = {
     try {
       const funnel = ctx.getExtension?.("funnel") as FunnelExtension | undefined;
       if (funnel && (await funnel.isAvailable())) {
-        const url = await funnel.expose(port);
+        const url = await funnel.expose(listeningPort!);
         if (url) {
           publicUrl = `${url}${resolvedConfig.basePath}`;
           logger.info(`Webhooks publicly accessible at ${publicUrl}`);
@@ -416,14 +419,8 @@ const plugin: WOPRPlugin = {
       logger.debug(`Funnel auto-expose failed (non-fatal): ${err}`);
     }
 
-    // Emit ready event for downstream plugins
-    await ctx.events.emit("webhooks:ready", {
-      port,
-      basePath: resolvedConfig.basePath,
-      publicUrl,
-    });
-
-    // Register extension for CLI and other plugins
+    // Register extension for CLI and other plugins (before emitting ready event
+    // so downstream listeners can call ctx.getExtension('webhooks') immediately)
     const extension: WebhooksExtension = {
       getConfig: () => resolvedConfig,
       getPort: () => listeningPort,
@@ -502,6 +499,13 @@ const plugin: WOPRPlugin = {
     };
 
     ctx.registerExtension("webhooks", extension);
+
+    // Emit ready event for downstream plugins
+    await ctx.events.emit("webhooks:ready", {
+      port: listeningPort,
+      basePath: resolvedConfig.basePath,
+      publicUrl,
+    });
 
     // Subscribe to events for channel delivery
     ctx.events.on("webhook:agent:response", async (event: any) => {
