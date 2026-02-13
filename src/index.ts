@@ -156,8 +156,8 @@ function createWebhookServer(
       return;
     }
 
-    // Extract and validate token
-    const { token, fromQuery } = extractToken(req, url);
+    // Extract and validate token (header-only: Authorization: Bearer or X-WOPR-Token)
+    const token = extractToken(req);
 
     if (!token) {
       sendError(res, 401, "Authorization required");
@@ -167,10 +167,6 @@ function createWebhookServer(
     if (token !== config.token) {
       sendError(res, 401, "Invalid token");
       return;
-    }
-
-    if (fromQuery) {
-      logger.warn("Token passed via query param (deprecated)");
     }
 
     // Read body
