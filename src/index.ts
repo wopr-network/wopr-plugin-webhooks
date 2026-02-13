@@ -39,6 +39,7 @@ import {
   type WebhookHandlerContext,
   type Logger,
 } from "./handlers.js";
+import { createWebhooksExtension, recordDelivery, clearDeliveryHistory } from "./webhooks-extension.js";
 
 // ============================================================================
 // Constants
@@ -195,9 +196,29 @@ function createWebhookServer(
 
       if (normalizedSubPath === "wake") {
         result = await handleWake(payload, handlerCtx);
+        recordDelivery({
+          webhookId: "wake",
+          timestamp: new Date().toISOString(),
+          status: result.ok ? "success" : "error",
+          httpStatus: 200,
+          path: normalizedSubPath,
+          action: "wake",
+          payload,
+          error: result.ok ? undefined : result.error,
+        });
         sendJson(res, 200, result);
       } else if (normalizedSubPath === "agent") {
         result = await handleAgent(payload, handlerCtx);
+        recordDelivery({
+          webhookId: "agent",
+          timestamp: new Date().toISOString(),
+          status: result.ok ? "success" : "error",
+          httpStatus: 202,
+          path: normalizedSubPath,
+          action: "agent",
+          payload,
+          error: result.ok ? undefined : result.error,
+        });
         sendJson(res, 202, result); // 202 Accepted for async
       } else if (normalizedSubPath === "github") {
         // GitHub webhook with signature verification
@@ -209,12 +230,24 @@ function createWebhookServer(
           result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
         }
 
+        const ghStatus =
+          !result.ok && result.error === "Invalid signature" ? 401
+          : !result.ok && result.error === "Unauthorized organization" ? 403
+          : !result.ok ? 400
+          : 200;
+        recordDelivery({
+          webhookId: "github",
+          timestamp: new Date().toISOString(),
+          status: result.ok ? "success" : "error",
+          httpStatus: ghStatus,
+          path: normalizedSubPath,
+          action: result.action || "github",
+          payload,
+          error: result.ok ? undefined : result.error,
+        });
+
         if (!result.ok) {
-          const status =
-            result.error === "Invalid signature" ? 401
-            : result.error === "Unauthorized organization" ? 403
-            : 400;
-          sendError(res, status, result.error || "Unknown error");
+          sendError(res, ghStatus, result.error || "Unknown error");
         } else {
           sendJson(res, 200, result);
         }
@@ -222,6 +255,18 @@ function createWebhookServer(
         // Mapped hook
         const headers = normalizeHeaders(req);
         result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
+
+        const mappedStatus = !result.ok ? 400 : result.action === "agent" ? 202 : 200;
+        recordDelivery({
+          webhookId: normalizedSubPath,
+          timestamp: new Date().toISOString(),
+          status: result.ok ? "success" : "error",
+          httpStatus: mappedStatus,
+          path: normalizedSubPath,
+          action: result.action || normalizedSubPath,
+          payload,
+          error: result.ok ? undefined : result.error,
+        });
 
         if (!result.ok) {
           sendError(res, 400, result.error || "Unknown error");
@@ -487,6 +532,15 @@ const plugin: WOPRPlugin = {
 
     ctx.registerExtension("webhooks", extension);
 
+    // Register WebMCP extension for daemon API routes
+    const webmcpExtension = createWebhooksExtension(
+      () => resolvedConfig,
+      () => listeningPort,
+      () => publicUrl,
+    );
+    ctx.registerExtension("webhooks-webmcp", webmcpExtension);
+    logger.info("Registered webhooks-webmcp extension");
+
     // Emit ready event for downstream plugins
     await ctx.events.emitCustom("webhooks:ready", {
       port: listeningPort,
@@ -549,9 +603,15 @@ const plugin: WOPRPlugin = {
     listeningPort = null;
     publicUrl = null;
     clearTransformCache();
+    clearDeliveryHistory();
     pluginContext?.unregisterExtension("webhooks");
+    pluginContext?.unregisterExtension("webhooks-webmcp");
     pluginContext = null;
   },
 };
 
+export { createWebhooksExtension, recordDelivery, clearDeliveryHistory } from "./webhooks-extension.js";
+export type { WebhooksWebMCPExtension, WebhookEndpointInfo, WebhookDeliveryInfo, WebhookUrlInfo } from "./webhooks-extension.js";
+export { registerWebhooksTools } from "./webmcp-webhooks.js";
+export type { WebMCPRegistry, WebMCPTool, AuthContext } from "./webmcp-webhooks.js";
 export default plugin;
