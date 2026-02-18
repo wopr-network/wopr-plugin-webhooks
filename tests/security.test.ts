@@ -191,6 +191,23 @@ describe("secureCompare", () => {
   it("returns true for empty strings", () => {
     expect(secureCompare("", "")).toBe(true);
   });
+
+  it("returns false when one string is empty and the other is not", () => {
+    expect(secureCompare("", "x")).toBe(false);
+    expect(secureCompare("x", "")).toBe(false);
+  });
+
+  it("returns true for equal unicode strings", () => {
+    expect(secureCompare("emoji\u{1F389}", "emoji\u{1F389}")).toBe(true);
+  });
+
+  it("returns false for a near-miss token", () => {
+    expect(secureCompare("token123", "token124")).toBe(false);
+  });
+
+  it("returns false for much longer string vs shorter", () => {
+    expect(secureCompare("short", "muchlongerstring")).toBe(false);
+  });
 });
 
 // ============================================================================
