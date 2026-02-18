@@ -4,7 +4,7 @@
  * Payload safety wrappers for untrusted external content.
  */
 
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 // ============================================================================
 // External Content Safety
@@ -133,18 +133,15 @@ export function sanitizeObject(
 
 /**
  * Constant-time string comparison to prevent timing attacks.
+ *
+ * Uses HMAC to normalize both inputs to fixed-length digests before comparing,
+ * so neither the length nor the content of either string is leaked via timing.
  */
 export function secureCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-
-  return result === 0;
+  const key = "wopr-secure-compare";
+  const hmacA = createHmac("sha256", key).update(a).digest();
+  const hmacB = createHmac("sha256", key).update(b).digest();
+  return timingSafeEqual(hmacA, hmacB);
 }
 
 /**

@@ -40,6 +40,7 @@ import {
   type Logger,
 } from "./handlers.js";
 import { createWebhooksExtension, recordDelivery, clearDeliveryHistory } from "./webhooks-extension.js";
+import { secureCompare } from "./security.js";
 
 // ============================================================================
 // Constants
@@ -165,7 +166,7 @@ function createWebhookServer(
       return;
     }
 
-    if (token !== config.token) {
+    if (!secureCompare(token, config.token)) {
       sendError(res, 401, "Invalid token");
       return;
     }
