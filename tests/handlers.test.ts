@@ -389,7 +389,7 @@ describe("handleWake", () => {
       ctx
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("session not found");
+    expect(result.error).toBe("Injection failed");
   });
 });
 
@@ -681,7 +681,7 @@ describe("handleGitHub", () => {
       ctx
     );
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("inject failed");
+    expect(result.error).toBe("Injection failed");
   });
 });
 

@@ -36,7 +36,7 @@
     }
   },
   "dependencies": {
-    "@wopr-network/plugin-types": "^0.2.1"
+    "@wopr-network/plugin-types": "^0.2.0"
   },
   "publishConfig": {
     "access": "public"
