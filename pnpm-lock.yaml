@@ -9,7 +9,7 @@ importers:
   .:
     dependencies:
       '@wopr-network/plugin-types':
-        specifier: ^0.2.1
+        specifier: ^0.2.0
         version: 0.2.1(zod@3.25.76)
     devDependencies:
       '@biomejs/biome':
