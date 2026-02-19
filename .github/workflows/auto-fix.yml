@@ -9,6 +9,142 @@ on:
     types: [completed]
 
 jobs:
-  auto-fix:
-    uses: wopr-network/.github/.github/workflows/auto-fix.yml@main
-    secrets: inherit
+  check-and-trigger:
+    runs-on: [self-hosted, Linux, X64]
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Gate — check event eligibility
+        id: gate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const isReviewerEvent =
+              (context.eventName === 'issue_comment' || context.eventName === 'pull_request_review_comment') &&
+              (context.payload.comment?.user?.login === 'greptile-apps[bot]' ||
+               context.payload.comment?.user?.login === 'coderabbitai[bot]') &&
+              !!context.payload.issue?.pull_request;
+
+            const ciChecks = ['Lint and Type Check', 'Test', 'Build', 'Validate Build', 'unit-test', 'integration-test'];
+            const isCIFailure =
+              context.eventName === 'check_run' &&
+              context.payload.check_run?.conclusion === 'failure' &&
+              context.payload.check_run?.pull_requests?.length > 0 &&
+              ciChecks.includes(context.payload.check_run.name);
+
+            core.setOutput('run', (isReviewerEvent || isCIFailure) ? 'true' : 'false');
+            core.setOutput('is_ci_failure', isCIFailure ? 'true' : 'false');
+
+            let prNumber, failedCheck;
+            if (isCIFailure) {
+              prNumber = context.payload.check_run.pull_requests[0].number;
+              failedCheck = context.payload.check_run.name;
+            } else if (isReviewerEvent) {
+              prNumber = context.payload.issue.number;
+            }
+            core.setOutput('pr_number', String(prNumber || ''));
+            core.setOutput('failed_check', failedCheck || '');
+
+      - name: Check for auto-fixing label
+        id: label-check
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: labels } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt('${{ steps.gate.outputs.pr_number }}'),
+            });
+            core.setOutput('skip', labels.some(l => l.name === 'auto-fixing') ? 'true' : 'false');
+
+      - name: Add auto-fixing label
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt('${{ steps.gate.outputs.pr_number }}'),
+              labels: ['auto-fixing'],
+            });
+
+      - name: Wait for other reviewers (reviewer events only)
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false' && steps.gate.outputs.is_ci_failure == 'false'
+        run: sleep 180
+
+      - name: Get PR branch
+        id: pr-info
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ steps.gate.outputs.pr_number }}'),
+            });
+            core.setOutput('head_ref', pr.head.ref);
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false'
+        with:
+          ref: ${{ steps.pr-info.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Claude auto-fix (reviewer feedback)
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false' && steps.gate.outputs.is_ci_failure == 'false'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: /home/runner/.local/bin/claude
+          model: claude-sonnet-4-6
+          prompt: |
+            You are fixing issues flagged by automated code reviewers on PR #${{ steps.gate.outputs.pr_number }} in ${{ github.repository }}.
+
+            Steps:
+            1. Read every comment from greptile-apps[bot] and coderabbitai[bot] on this PR
+            2. Fix every issue they flagged — bugs, security concerns, TypeScript issues, missing error handling, test gaps
+            3. Commit and push fixes to this branch
+            4. Remove the auto-fixing label: gh issue edit ${{ steps.gate.outputs.pr_number }} --remove-label auto-fixing --repo ${{ github.repository }}
+            5. Queue for merge: gh pr merge --auto --squash --repo ${{ github.repository }} ${{ steps.gate.outputs.pr_number }}
+
+            Do not skip flagged issues. Fix everything or leave a clear PR comment explaining why it does not apply.
+
+      - name: Claude auto-fix (CI failure)
+        if: steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false' && steps.gate.outputs.is_ci_failure == 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          path_to_claude_code_executable: /home/runner/.local/bin/claude
+          model: claude-sonnet-4-6
+          prompt: |
+            The CI check "${{ steps.gate.outputs.failed_check }}" is failing on PR #${{ steps.gate.outputs.pr_number }} in ${{ github.repository }}.
+
+            Steps:
+            1. Run the failing check locally to see exact errors (lint, type check, tests, or build)
+            2. Fix every failing error — do not suppress, do not skip
+            3. Commit and push fixes to this branch
+            4. Remove the auto-fixing label: gh issue edit ${{ steps.gate.outputs.pr_number }} --remove-label auto-fixing --repo ${{ github.repository }}
+            5. Once CI passes, queue for merge: gh pr merge --auto --squash --repo ${{ github.repository }} ${{ steps.gate.outputs.pr_number }}
+
+            Focus on the "${{ steps.gate.outputs.failed_check }}" failure. Fix the root cause.
+
+      - name: Remove auto-fixing label (cleanup)
+        if: always() && steps.gate.outputs.run == 'true' && steps.label-check.outputs.skip == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: parseInt('${{ steps.gate.outputs.pr_number }}'),
+                name: 'auto-fixing',
+              });
+            } catch (e) { /* already removed by Claude */ }
