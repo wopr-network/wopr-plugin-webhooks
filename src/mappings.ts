@@ -4,7 +4,7 @@
  * Resolves and applies hook mappings with template rendering and transforms.
  */
 
-import { dirname, isAbsolute, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type {
 	HookAction,
@@ -116,7 +116,7 @@ export function resolveMappings(
 			mappings.push(
 				...presetMappings.map((m) => ({
 					...m,
-					allowUnsafeExternalContent: config.gmail!.allowUnsafeExternalContent,
+					allowUnsafeExternalContent: config.gmail?.allowUnsafeExternalContent,
 				})),
 			);
 		} else {

@@ -9,7 +9,6 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { applyMappings } from "./mappings.js";
 import {
 	sanitizeString,
-	secureCompare,
 	verifyGitHubSignature,
 	wrapExternalContent,
 } from "./security.js";
@@ -140,15 +139,15 @@ export async function readJsonBody(
 			try {
 				const parsed = JSON.parse(trimmed) as unknown;
 				resolve({ ok: true, value: parsed, raw });
-			} catch (err) {
-				resolve({ ok: false, error: String(err) });
+			} catch {
+				resolve({ ok: false, error: "Invalid JSON" });
 			}
 		});
 
-		req.on("error", (err) => {
+		req.on("error", () => {
 			if (done) return;
 			done = true;
-			resolve({ ok: false, error: String(err) });
+			resolve({ ok: false, error: "Request read error" });
 		});
 	});
 }
@@ -300,7 +299,7 @@ export async function handleWake(
 		return { ok: true, action: "wake", sessionKey: session };
 	} catch (err) {
 		ctx.logger.error({ msg: "Wake hook failed", session, error: String(err) });
-		return { ok: false, error: String(err) };
+		return { ok: false, error: "Injection failed" };
 	}
 }
 
@@ -440,7 +439,7 @@ async function executeAction(
 				session: action.session,
 				error: String(err),
 			});
-			return { ok: false, error: String(err) };
+			return { ok: false, error: "Injection failed" };
 		}
 	}
 
@@ -751,7 +750,7 @@ export async function handleGitHub(
 			msg: "GitHub webhook injection failed",
 			error: String(err),
 		});
-		return { ok: false, error: String(err) };
+		return { ok: false, error: "Injection failed" };
 	}
 }
 

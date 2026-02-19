@@ -490,7 +490,7 @@ const plugin: WOPRPlugin = {
 				srv.removeListener("error", reject);
 				listeningPort = (srv.address() as AddressInfo).port;
 				logger.info(
-					`Webhooks server listening on http://${host}:${listeningPort}${resolvedConfig!.basePath}`,
+					`Webhooks server listening on http://${host}:${listeningPort}${resolvedConfig?.basePath}`,
 				);
 				resolve();
 			});
@@ -502,7 +502,7 @@ const plugin: WOPRPlugin = {
 				| FunnelExtension
 				| undefined;
 			if (funnel && (await funnel.isAvailable())) {
-				const url = await funnel.expose(listeningPort!);
+				const url = await funnel.expose(listeningPort ?? 0);
 				if (url) {
 					publicUrl = `${url}${resolvedConfig.basePath}`;
 					logger.info(`Webhooks publicly accessible at ${publicUrl}`);

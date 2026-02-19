@@ -159,10 +159,18 @@ export function secureCompare(a: string, b: string): boolean {
 export function generateToken(length: number = 32): string {
 	const chars =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-	const bytes = randomBytes(length);
+	// Use rejection sampling to avoid modulo bias: discard bytes >= the largest
+	// multiple of chars.length that fits in a byte (0–255) so the remaining
+	// range maps evenly onto chars.
+	const limit = 256 - (256 % chars.length);
 	let token = "";
-	for (let i = 0; i < length; i++) {
-		token += chars[bytes[i] % chars.length];
+	while (token.length < length) {
+		const bytes = randomBytes(length - token.length + 8); // over-request to reduce iterations
+		for (let i = 0; i < bytes.length && token.length < length; i++) {
+			if (bytes[i] < limit) {
+				token += chars[bytes[i] % chars.length];
+			}
+		}
 	}
 	return token;
 }
