@@ -1,21 +1,11 @@
-name: Publish to npm
+name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
 
 jobs:
-  publish:
-    runs-on: [self-hosted, Linux, X64]
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - run: bun run build
-      - run: bun test || true
-      - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  release:
+    uses: wopr-network/.github/.github/workflows/release.yml@main
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
