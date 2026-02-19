@@ -106,7 +106,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_claude_code_executable: /home/runner/.local/bin/claude
-          model: claude-sonnet-4-6
+          claude_args: "--model claude-sonnet-4-6 --dangerously-skip-permissions"
           allowed_bots: '*'
           prompt: |
             You are fixing issues flagged by automated code reviewers on PR #${{ steps.ctx.outputs.pr_number }} in ${{ github.repository }}.
@@ -126,7 +126,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           path_to_claude_code_executable: /home/runner/.local/bin/claude
-          model: claude-sonnet-4-6
+          claude_args: "--model claude-sonnet-4-6 --dangerously-skip-permissions"
           allowed_bots: '*'
           prompt: |
             The CI check "${{ steps.ctx.outputs.failed_check }}" is failing on PR #${{ steps.ctx.outputs.pr_number }} in ${{ github.repository }}.
