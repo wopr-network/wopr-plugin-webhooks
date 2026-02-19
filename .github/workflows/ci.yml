@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-check:
+    name: Lint and Type Check
+    runs-on: [self-hosted, Linux, X64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (if script exists)
+        run: |
+          if node -e "const p=require('./package.json'); process.exit(p.scripts?.lint ? 0 : 1)"; then
+            echo "Running lint..."
+            pnpm lint
+          else
+            echo "No lint script found, skipping"
+          fi
+
+      - name: Typecheck (if script exists)
+        run: |
+          if node -e "const p=require('./package.json'); process.exit(p.scripts?.typecheck ? 0 : 1)"; then
+            echo "Running typecheck..."
+            pnpm typecheck
+          else
+            echo "No typecheck script, running tsc --noEmit"
+            pnpm exec tsc --noEmit
+          fi
+
+  build:
+    name: Build (Node ${{ matrix.node-version }})
+    runs-on: [self-hosted, Linux, X64]
+    needs: lint-and-check
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-node-${{ matrix.node-version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  validate-package:
+    name: Validate Package (Node ${{ matrix.node-version }})
+    runs-on: [self-hosted, Linux, X64]
+    needs: build
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+
+      - name: Install production dependencies
+        run: pnpm install --frozen-lockfile --prod
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-node-${{ matrix.node-version }}
+          path: dist/
+
+      - name: Validate dist/index.js exists
+        run: test -f dist/index.js && echo "dist/index.js exists" || (echo "Error: dist/index.js not found" && exit 1)
+
+      - name: Validate dist/index.d.ts exists
+        run: test -f dist/index.d.ts && echo "dist/index.d.ts exists" || (echo "Error: dist/index.d.ts not found" && exit 1)
+
+      - name: Validate ESM import
+        run: node --input-type=module -e "import('./dist/index.js').then(() => console.log('ESM import successful'))"
+
+      - name: Validate npm packaging
+        run: npm pack --dry-run && echo "Package configuration valid"
+
+  test:
+    name: Test
+    runs-on: [self-hosted, Linux, X64]
+    needs: lint-and-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test (if script exists)
+        run: |
+          if node -e "const p=require('./package.json'); process.exit(p.scripts?.test ? 0 : 1)"; then
+            echo "Running tests..."
+            pnpm test
+          else
+            echo "No test script found, skipping"
+          fi
