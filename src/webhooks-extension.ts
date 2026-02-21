@@ -47,10 +47,7 @@ export interface WebhooksWebMCPExtension {
 	listWebhooks: () => WebhookEndpointInfo[];
 
 	/** Recent webhook deliveries with payloads (sensitive data redacted) */
-	getWebhookHistory: (
-		webhookId?: string,
-		limit?: number,
-	) => WebhookDeliveryInfo[];
+	getWebhookHistory: (webhookId?: string, limit?: number) => WebhookDeliveryInfo[];
 
 	/** Get the webhook receiver URL for this instance */
 	getWebhookUrl: () => WebhookUrlInfo;
@@ -135,29 +132,16 @@ const SENSITIVE_FIELDS = new Set([
 	"pin",
 ]);
 
-function redactSensitiveFields(
-	obj: Record<string, unknown>,
-	depth = 0,
-): Record<string, unknown> {
+function redactSensitiveFields(obj: Record<string, unknown>, depth = 0): Record<string, unknown> {
 	if (depth > 5) return { "[depth limit]": true };
 
 	const result: Record<string, unknown> = {};
 	for (const [key, value] of Object.entries(obj)) {
 		const lowerKey = key.toLowerCase().replace(/[-_]/g, "");
-		if (
-			SENSITIVE_FIELDS.has(lowerKey) ||
-			SENSITIVE_FIELDS.has(key.toLowerCase())
-		) {
+		if (SENSITIVE_FIELDS.has(lowerKey) || SENSITIVE_FIELDS.has(key.toLowerCase())) {
 			result[key] = "[REDACTED]";
-		} else if (
-			value !== null &&
-			typeof value === "object" &&
-			!Array.isArray(value)
-		) {
-			result[key] = redactSensitiveFields(
-				value as Record<string, unknown>,
-				depth + 1,
-			);
+		} else if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+			result[key] = redactSensitiveFields(value as Record<string, unknown>, depth + 1);
 		} else if (Array.isArray(value)) {
 			result[key] = value.map((item) =>
 				item !== null && typeof item === "object" && !Array.isArray(item)
@@ -175,9 +159,7 @@ function redactSensitiveFields(
 // Extension factory
 // ============================================================================
 
-function mappingToEndpointInfo(
-	mapping: HookMappingResolved,
-): WebhookEndpointInfo {
+function mappingToEndpointInfo(mapping: HookMappingResolved): WebhookEndpointInfo {
 	return {
 		id: mapping.id,
 		action: mapping.action,
@@ -207,14 +189,8 @@ export function createWebhooksExtension(
 			return config.mappings.map(mappingToEndpointInfo);
 		},
 
-		getWebhookHistory: (
-			webhookId?: string,
-			limit?: number,
-		): WebhookDeliveryInfo[] => {
-			const cap = Math.min(
-				Math.max(1, limit ?? DEFAULT_HISTORY_LIMIT),
-				MAX_HISTORY_SIZE,
-			);
+		getWebhookHistory: (webhookId?: string, limit?: number): WebhookDeliveryInfo[] => {
+			const cap = Math.min(Math.max(1, limit ?? DEFAULT_HISTORY_LIMIT), MAX_HISTORY_SIZE);
 
 			let entries = deliveryHistory;
 			if (webhookId) {
@@ -231,11 +207,7 @@ export function createWebhooksExtension(
 			const port = getPort();
 
 			return {
-				url:
-					pubUrl ??
-					(port
-						? `http://localhost:${port}${config?.basePath ?? "/hooks"}`
-						: null),
+				url: pubUrl ?? (port ? `http://localhost:${port}${config?.basePath ?? "/hooks"}` : null),
 				basePath: config?.basePath ?? "/hooks",
 				port,
 				isPublic: pubUrl !== null,

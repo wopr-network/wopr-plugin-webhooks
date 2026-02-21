@@ -20,6 +20,14 @@ src/
   mappings.ts   # Webhook → session/channel mapping rules
   security.ts   # Signature verification (HMAC, bearer tokens)
   types.ts      # Plugin-local types
+tests/
+  lifecycle.test.ts        # Init/shutdown lifecycle tests
+  handlers.test.ts         # Token extraction, payload validation, handler tests
+  mappings.test.ts         # Hook mapping resolution tests
+  security.test.ts         # Signature verification and sanitization tests
+  webhooks-extension.test.ts  # Extension record/delivery tests
+  webmcp-webhooks.test.ts  # WebMCP tool registration tests
+  index.test.ts            # Plugin smoke tests
 ```
 
 ## Key Details

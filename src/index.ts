@@ -12,11 +12,7 @@
  * - Payload safety wrappers
  */
 
-import {
-	createServer,
-	type IncomingMessage,
-	type ServerResponse,
-} from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
 import {
@@ -32,11 +28,7 @@ import {
 	sendJson,
 	type WebhookHandlerContext,
 } from "./handlers.js";
-import {
-	applyMappings,
-	clearTransformCache,
-	resolveMappings,
-} from "./mappings.js";
+import { applyMappings, clearTransformCache, resolveMappings } from "./mappings.js";
 import { secureCompare } from "./security.js";
 import type {
 	FunnelExtension,
@@ -68,19 +60,16 @@ const DEFAULT_MAX_BODY_BYTES = 256 * 1024; // 256KB
 
 let server: ReturnType<typeof createServer> | null = null;
 let resolvedConfig: WebhooksConfigResolved | null = null;
-let pluginContext: WOPRPluginContext | null = null;
+let ctx: WOPRPluginContext | null = null;
 let listeningPort: number | null = null;
 let publicUrl: string | null = null;
-let unsubscribeAgentResponse: (() => void) | null = null;
+const cleanups: Array<() => void | Promise<void>> = [];
 
 // ============================================================================
 // Config Resolution
 // ============================================================================
 
-function resolveConfig(
-	config: WebhooksConfig,
-	woprHome: string,
-): WebhooksConfigResolved | null {
+function resolveConfig(config: WebhooksConfig, woprHome: string): WebhooksConfigResolved | null {
 	if (!config.enabled) {
 		return null;
 	}
@@ -92,17 +81,14 @@ function resolveConfig(
 
 	const rawPath = config.path?.trim() || DEFAULT_PATH;
 	const withSlash = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
-	const basePath =
-		withSlash.length > 1 ? withSlash.replace(/\/+$/, "") : withSlash;
+	const basePath = withSlash.length > 1 ? withSlash.replace(/\/+$/, "") : withSlash;
 
 	if (basePath === "/") {
 		throw new Error("webhooks.path may not be '/'");
 	}
 
 	const maxBodyBytes =
-		config.maxBodyBytes && config.maxBodyBytes > 0
-			? config.maxBodyBytes
-			: DEFAULT_MAX_BODY_BYTES;
+		config.maxBodyBytes && config.maxBodyBytes > 0 ? config.maxBodyBytes : DEFAULT_MAX_BODY_BYTES;
 
 	const mappings = resolveMappings(config, woprHome);
 
@@ -156,10 +142,7 @@ function createWebhookServer(
 
 	return createServer(async (req: IncomingMessage, res: ServerResponse) => {
 		// Parse URL
-		const url = new URL(
-			req.url || "/",
-			`http://${req.headers.host || "localhost"}`,
-		);
+		const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 		const pathname = url.pathname;
 
 		// Only handle requests under basePath
@@ -174,8 +157,8 @@ function createWebhookServer(
 			return;
 		}
 
-		// Extract and validate token (header-only: Authorization: Bearer or X-WOPR-Token)
-		const token = extractToken(req);
+		// Extract and validate token (Authorization: Bearer, X-WOPR-Token, or ?token query param)
+		const { token } = extractToken(req, url);
 
 		if (!token) {
 			sendError(res, 401, "Authorization required");
@@ -244,13 +227,7 @@ function createWebhookServer(
 
 				// If no target session configured, fall through to mapped handler
 				if (!result.ok && result.error === "no_target_session") {
-					result = await handleMapped(
-						normalizedSubPath,
-						payload,
-						headers,
-						url,
-						handlerCtx,
-					);
+					result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
 				}
 
 				const ghStatus =
@@ -280,19 +257,9 @@ function createWebhookServer(
 			} else if (normalizedSubPath) {
 				// Mapped hook
 				const headers = normalizeHeaders(req);
-				result = await handleMapped(
-					normalizedSubPath,
-					payload,
-					headers,
-					url,
-					handlerCtx,
-				);
+				result = await handleMapped(normalizedSubPath, payload, headers, url, handlerCtx);
 
-				const mappedStatus = !result.ok
-					? 400
-					: result.action === "agent"
-						? 202
-						: 200;
+				const mappedStatus = !result.ok ? 400 : result.action === "agent" ? 202 : 200;
 				recordDelivery({
 					webhookId: normalizedSubPath,
 					timestamp: new Date().toISOString(),
@@ -322,6 +289,53 @@ function createWebhookServer(
 }
 
 // ============================================================================
+// Config Schema & Manifest
+// ============================================================================
+
+const configSchema = {
+	title: "Webhooks",
+	description: "HTTP webhook ingress for external triggers",
+	fields: [
+		{
+			name: "enabled",
+			type: "boolean" as const,
+			label: "Enable Webhooks",
+			description: "Enable HTTP webhook endpoints",
+			default: false,
+		},
+		{
+			name: "token",
+			type: "password" as const,
+			label: "Webhook Token",
+			description: "Shared secret token for webhook authentication",
+			required: true,
+			secret: true,
+		},
+		{
+			name: "port",
+			type: "number" as const,
+			label: "Port",
+			description: "HTTP server port (default: 7438)",
+			default: 7438,
+		},
+		{
+			name: "host",
+			type: "text" as const,
+			label: "Host",
+			description: "HTTP server bind address (default: 127.0.0.1)",
+			default: "127.0.0.1",
+		},
+		{
+			name: "path",
+			type: "text" as const,
+			label: "Base Path",
+			description: "Base path for webhook endpoints (default: /hooks)",
+			default: "/hooks",
+		},
+	],
+};
+
+// ============================================================================
 // Plugin Definition
 // ============================================================================
 
@@ -329,6 +343,40 @@ const plugin: WOPRPlugin = {
 	name: "wopr-plugin-webhooks",
 	version: "1.0.0",
 	description: "HTTP webhook ingress for external triggers",
+
+	manifest: {
+		name: "wopr-plugin-webhooks",
+		version: "1.0.0",
+		description: "HTTP webhook ingress for triggering agent runs from external systems",
+		author: "WOPR",
+		license: "MIT",
+		capabilities: ["webhooks", "http-ingress"],
+		category: "integration",
+		tags: ["webhooks", "http", "automation", "github", "gmail", "slack"],
+		icon: "🪝",
+		requires: {
+			network: {
+				inbound: true,
+				ports: [7438],
+			},
+		},
+		provides: {
+			capabilities: [
+				{
+					type: "webhooks",
+					id: "webhooks-http",
+					displayName: "HTTP Webhooks",
+					tier: "wopr",
+				},
+			],
+		},
+		lifecycle: {
+			healthEndpoint: "/healthz",
+			shutdownBehavior: "graceful",
+			shutdownTimeoutMs: 5000,
+		},
+		configSchema,
+	},
 
 	commands: [
 		{
@@ -356,9 +404,7 @@ const plugin: WOPRPlugin = {
 					}
 					ctx.log.info(`Configured mappings:`);
 					for (const m of resolvedConfig.mappings) {
-						ctx.log.info(
-							`  - ${m.id}: ${m.action} (path: ${m.matchPath || "*"})`,
-						);
+						ctx.log.info(`  - ${m.id}: ${m.action} (path: ${m.matchPath || "*"})`);
 					}
 					return;
 				}
@@ -376,9 +422,7 @@ const plugin: WOPRPlugin = {
 					}
 
 					const payload = jsonPayload ? JSON.parse(jsonPayload) : {};
-					const extension = ctx.getExtension("webhooks") as
-						| WebhooksExtension
-						| undefined;
+					const extension = ctx.getExtension("webhooks") as WebhooksExtension | undefined;
 					if (!extension) {
 						ctx.log.error("Webhooks extension not registered");
 						return;
@@ -394,27 +438,25 @@ const plugin: WOPRPlugin = {
 		},
 	],
 
-	async init(ctx: WOPRPluginContext) {
-		pluginContext = ctx;
+	async init(pluginCtx: WOPRPluginContext) {
+		ctx = pluginCtx;
+
+		// Register config schema
+		if (pluginCtx.registerConfigSchema) {
+			pluginCtx.registerConfigSchema("wopr-plugin-webhooks", configSchema);
+		}
+
 		const logger: Logger = {
-			info: (msg) =>
-				ctx.log.info(typeof msg === "string" ? msg : JSON.stringify(msg)),
-			warn: (msg) =>
-				ctx.log.warn(typeof msg === "string" ? msg : JSON.stringify(msg)),
-			error: (msg) =>
-				ctx.log.error(typeof msg === "string" ? msg : JSON.stringify(msg)),
-			debug: (msg) =>
-				ctx.log.debug?.(typeof msg === "string" ? msg : JSON.stringify(msg)),
+			info: (msg) => pluginCtx.log.info(typeof msg === "string" ? msg : JSON.stringify(msg)),
+			warn: (msg) => pluginCtx.log.warn(typeof msg === "string" ? msg : JSON.stringify(msg)),
+			error: (msg) => pluginCtx.log.error(typeof msg === "string" ? msg : JSON.stringify(msg)),
+			debug: (msg) => pluginCtx.log.debug?.(typeof msg === "string" ? msg : JSON.stringify(msg)),
 		};
 
 		// Load config from main config (webhooks section, not plugin-specific)
-		const config = ctx.getMainConfig?.("webhooks") as
-			| WebhooksConfig
-			| undefined;
+		const config = pluginCtx.getMainConfig?.("webhooks") as WebhooksConfig | undefined;
 		if (!config?.enabled) {
-			logger.info(
-				"Webhooks plugin loaded (disabled - set webhooks.enabled: true in config)",
-			);
+			logger.info("Webhooks plugin loaded (disabled - set webhooks.enabled: true in config)");
 			return;
 		}
 
@@ -438,26 +480,16 @@ const plugin: WOPRPlugin = {
 		// to wopr.config.json, which we read here for signature verification and routing
 		let githubConfig: GitHubHookConfig | undefined;
 		try {
-			const mainConfig = ctx.getMainConfig?.() as
-				| Record<string, unknown>
-				| undefined;
+			const mainConfig = pluginCtx.getMainConfig?.() as Record<string, unknown> | undefined;
 			const github = mainConfig?.github;
 			if (github && typeof github === "object" && github !== null) {
 				const gh = github as Record<string, unknown>;
 				githubConfig = {
-					webhookSecret:
-						typeof gh.webhookSecret === "string" ? gh.webhookSecret : undefined,
-					prReviewSession:
-						typeof gh.prReviewSession === "string"
-							? gh.prReviewSession
-							: undefined,
-					releaseSession:
-						typeof gh.releaseSession === "string"
-							? gh.releaseSession
-							: undefined,
+					webhookSecret: typeof gh.webhookSecret === "string" ? gh.webhookSecret : undefined,
+					prReviewSession: typeof gh.prReviewSession === "string" ? gh.prReviewSession : undefined,
+					releaseSession: typeof gh.releaseSession === "string" ? gh.releaseSession : undefined,
 					allowedOrgs:
-						Array.isArray(gh.orgs) &&
-						gh.orgs.every((o: unknown) => typeof o === "string")
+						Array.isArray(gh.orgs) && gh.orgs.every((o: unknown) => typeof o === "string")
 							? (gh.orgs as string[])
 							: undefined,
 				};
@@ -481,7 +513,7 @@ const plugin: WOPRPlugin = {
 		const port = config.port || DEFAULT_PORT;
 		const host = config.host || "127.0.0.1";
 
-		const srv = createWebhookServer(resolvedConfig, githubConfig, ctx, logger);
+		const srv = createWebhookServer(resolvedConfig, githubConfig, pluginCtx, logger);
 		server = srv;
 
 		await new Promise<void>((resolve, reject) => {
@@ -498,9 +530,7 @@ const plugin: WOPRPlugin = {
 
 		// Auto-expose via tailscale funnel if available
 		try {
-			const funnel = ctx.getExtension?.("funnel") as
-				| FunnelExtension
-				| undefined;
+			const funnel = pluginCtx.getExtension?.("funnel") as FunnelExtension | undefined;
 			if (funnel && (await funnel.isAvailable())) {
 				const url = await funnel.expose(listeningPort ?? 0);
 				if (url) {
@@ -508,9 +538,7 @@ const plugin: WOPRPlugin = {
 					logger.info(`Webhooks publicly accessible at ${publicUrl}`);
 				}
 			} else {
-				logger.debug(
-					"Funnel extension not available; webhooks accessible locally only",
-				);
+				logger.debug("Funnel extension not available; webhooks accessible locally only");
 			}
 		} catch (err) {
 			logger.debug(`Funnel auto-expose failed (non-fatal): ${err}`);
@@ -536,23 +564,21 @@ const plugin: WOPRPlugin = {
 					config: resolvedConfig,
 					githubConfig,
 					inject: async (session, message, options) => {
-						return ctx.inject(session, message, {
+						return pluginCtx.inject(session, message, {
 							from: "webhook",
 							...options,
 						});
 					},
 					logMessage: (session, message, options) => {
-						ctx.logMessage(session, message, { from: "webhook", ...options });
+						pluginCtx.logMessage(session, message, { from: "webhook", ...options });
 					},
 					emit: async (event, eventPayload) => {
-						await ctx.events.emitCustom(event, eventPayload);
+						await pluginCtx.events.emitCustom(event, eventPayload);
 					},
 					logger,
 				};
 
-				const url = new URL(
-					`http://localhost${resolvedConfig.basePath}/${path}`,
-				);
+				const url = new URL(`http://localhost${resolvedConfig.basePath}/${path}`);
 
 				// Special handling for GitHub webhooks
 				if (path === "github") {
@@ -561,8 +587,7 @@ const plugin: WOPRPlugin = {
 					if (githubConfig?.webhookSecret) {
 						return {
 							ok: false,
-							error:
-								"GitHub webhooks with signature verification must use HTTP endpoint",
+							error: "GitHub webhooks with signature verification must use HTTP endpoint",
 						};
 					}
 
@@ -595,20 +620,21 @@ const plugin: WOPRPlugin = {
 					return null;
 				}
 
-				const ctx: HookMappingContext = {
+				const mappingCtx: HookMappingContext = {
 					payload,
 					headers: {},
-					url: new URL(
-						`http://localhost${resolvedConfig.basePath}/${mapping.matchPath || ""}`,
-					),
+					url: new URL(`http://localhost${resolvedConfig.basePath}/${mapping.matchPath || ""}`),
 					path: mapping.matchPath || "",
 				};
 
-				return applyMappings([mapping], ctx);
+				return applyMappings([mapping], mappingCtx);
 			},
 		};
 
-		ctx.registerExtension("webhooks", extension);
+		pluginCtx.registerExtension("webhooks", extension);
+		cleanups.push(() => {
+			ctx?.unregisterExtension("webhooks");
+		});
 
 		// Register WebMCP extension for daemon API routes
 		const webmcpExtension = createWebhooksExtension(
@@ -616,11 +642,14 @@ const plugin: WOPRPlugin = {
 			() => listeningPort,
 			() => publicUrl,
 		);
-		ctx.registerExtension("webhooks-webmcp", webmcpExtension);
+		pluginCtx.registerExtension("webhooks-webmcp", webmcpExtension);
+		cleanups.push(() => {
+			ctx?.unregisterExtension("webhooks-webmcp");
+		});
 		logger.info("Registered webhooks-webmcp extension");
 
 		// Emit ready event for downstream plugins
-		await ctx.events.emitCustom("webhooks:ready", {
+		await pluginCtx.events.emitCustom("webhooks:ready", {
 			port: listeningPort,
 			basePath: resolvedConfig.basePath,
 			publicUrl,
@@ -628,23 +657,20 @@ const plugin: WOPRPlugin = {
 
 		// Subscribe to custom events for channel delivery via the wildcard listener,
 		// since WOPREventBus.on() only accepts typed WOPREventMap keys.
-		unsubscribeAgentResponse = ctx.events.on("*", async (payload) => {
-			if (payload.type !== "webhook:agent:response") return;
+		const agentResponseHandler = async (woprEvent: { type: string; payload: unknown }) => {
+			if (woprEvent.type !== "webhook:agent:response") return;
 
 			const p = (
-				payload.payload && typeof payload.payload === "object"
-					? payload.payload
-					: {}
+				woprEvent.payload && typeof woprEvent.payload === "object" ? woprEvent.payload : {}
 			) as Record<string, unknown>;
-			const sessionKey =
-				typeof p.sessionKey === "string" ? p.sessionKey : undefined;
+			const sessionKey = typeof p.sessionKey === "string" ? p.sessionKey : undefined;
 			const response = typeof p.response === "string" ? p.response : "";
 			const channel = typeof p.channel === "string" ? p.channel : undefined;
 			const to = typeof p.to === "string" ? p.to : "";
 
 			if (!channel || channel === "last") {
 				// Use default channel provider if available
-				const providers = ctx.getChannelProviders();
+				const providers = pluginCtx.getChannelProviders();
 				if (providers.length > 0) {
 					try {
 						await providers[0].send(to, response);
@@ -665,7 +691,7 @@ const plugin: WOPRPlugin = {
 			}
 
 			// Find specific channel provider
-			const provider = ctx.getChannelProvider(channel);
+			const provider = pluginCtx.getChannelProvider(channel);
 			if (provider) {
 				try {
 					await provider.send(to, response);
@@ -688,18 +714,37 @@ const plugin: WOPRPlugin = {
 					channel,
 				});
 			}
+		};
+
+		// biome-ignore lint/suspicious/noExplicitAny: WOPREvent wildcard handler
+		const unsubscribe = pluginCtx.events.on("*", agentResponseHandler as any);
+		cleanups.push(() => {
+			if (typeof unsubscribe === "function") {
+				unsubscribe();
+			}
 		});
 
-		logger.info(
-			`Webhooks plugin initialized with ${resolvedConfig.mappings.length} mappings`,
-		);
+		// Clear caches on shutdown
+		cleanups.push(() => {
+			clearTransformCache();
+			clearDeliveryHistory();
+		});
+
+		logger.info(`Webhooks plugin initialized with ${resolvedConfig.mappings.length} mappings`);
 	},
 
 	async shutdown() {
-		if (unsubscribeAgentResponse) {
-			unsubscribeAgentResponse();
-			unsubscribeAgentResponse = null;
+		// Run cleanups in LIFO order
+		while (cleanups.length > 0) {
+			const fn = cleanups.pop();
+			if (!fn) break;
+			try {
+				await fn();
+			} catch {
+				// best-effort cleanup
+			}
 		}
+
 		if (server) {
 			server.close();
 			server = null;
@@ -707,11 +752,7 @@ const plugin: WOPRPlugin = {
 		resolvedConfig = null;
 		listeningPort = null;
 		publicUrl = null;
-		clearTransformCache();
-		clearDeliveryHistory();
-		pluginContext?.unregisterExtension("webhooks");
-		pluginContext?.unregisterExtension("webhooks-webmcp");
-		pluginContext = null;
+		ctx = null;
 	},
 };
 
