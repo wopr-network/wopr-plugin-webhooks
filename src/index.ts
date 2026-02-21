@@ -145,6 +145,16 @@ function createWebhookServer(
 		const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 		const pathname = url.pathname;
 
+		// Health check endpoint
+		if (pathname === "/healthz") {
+			if (req.method !== "GET") {
+				sendError(res, 405, "Method not allowed");
+				return;
+			}
+			sendJson(res, 200, { ok: true });
+			return;
+		}
+
 		// Only handle requests under basePath
 		if (!pathname.startsWith(config.basePath)) {
 			sendError(res, 404, "Not found");
@@ -158,7 +168,14 @@ function createWebhookServer(
 		}
 
 		// Extract and validate token (Authorization: Bearer, X-WOPR-Token, or ?token query param)
-		const { token } = extractToken(req, url);
+		const { token, fromQuery } = extractToken(req, url);
+
+		if (fromQuery) {
+			logger.warn({
+				msg: "Token passed as query parameter; use Authorization: Bearer or X-WOPR-Token header instead (query tokens appear in server logs)",
+				path: pathname,
+			});
+		}
 
 		if (!token) {
 			sendError(res, 401, "Authorization required");
