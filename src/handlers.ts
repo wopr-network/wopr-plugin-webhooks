@@ -7,11 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { applyMappings } from "./mappings.js";
-import {
-	sanitizeString,
-	verifyGitHubSignature,
-	wrapExternalContent,
-} from "./security.js";
+import { sanitizeString, verifyGitHubSignature, wrapExternalContent } from "./security.js";
 import type {
 	AgentPayload,
 	GitHubHookConfig,
@@ -29,11 +25,7 @@ import type {
 export interface WebhookHandlerContext {
 	config: WebhooksConfigResolved;
 	githubConfig?: GitHubHookConfig;
-	inject: (
-		session: string,
-		message: string,
-		options?: InjectOptions,
-	) => Promise<string>;
+	inject: (session: string, message: string, options?: InjectOptions) => Promise<string>;
 	logMessage: (session: string, message: string, options?: LogOptions) => void;
 	emit: (event: string, payload: Record<string, unknown>) => Promise<void>;
 	logger: Logger;
@@ -61,29 +53,38 @@ export interface Logger {
 // Token Extraction
 // ============================================================================
 
-export function extractToken(req: IncomingMessage): string | undefined {
+export interface ExtractTokenResult {
+	token: string | undefined;
+	fromQuery: boolean;
+}
+
+export function extractToken(req: IncomingMessage, url?: URL): ExtractTokenResult {
 	// Bearer token (preferred)
 	const auth =
-		typeof req.headers.authorization === "string"
-			? req.headers.authorization.trim()
-			: "";
+		typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
 	if (auth.toLowerCase().startsWith("bearer ")) {
 		const token = auth.slice(7).trim();
 		if (token) {
-			return token;
+			return { token, fromQuery: false };
 		}
 	}
 
 	// Custom header
 	const headerToken =
-		typeof req.headers["x-wopr-token"] === "string"
-			? req.headers["x-wopr-token"].trim()
-			: "";
+		typeof req.headers["x-wopr-token"] === "string" ? req.headers["x-wopr-token"].trim() : "";
 	if (headerToken) {
-		return headerToken;
+		return { token: headerToken, fromQuery: false };
 	}
 
-	return undefined;
+	// Query param (deprecated)
+	if (url) {
+		const queryToken = url.searchParams.get("token")?.trim();
+		if (queryToken) {
+			return { token: queryToken, fromQuery: true };
+		}
+	}
+
+	return { token: undefined, fromQuery: false };
 }
 
 // ============================================================================
@@ -180,8 +181,7 @@ export function validateWakePayload(
 		return { ok: false, error: "text required" };
 	}
 
-	const session =
-		typeof payload.session === "string" ? payload.session.trim() : "";
+	const session = typeof payload.session === "string" ? payload.session.trim() : "";
 	if (!session) {
 		return { ok: false, error: "session required" };
 	}
@@ -193,19 +193,15 @@ export function validateWakePayload(
 export function validateAgentPayload(
 	payload: Record<string, unknown>,
 ): { ok: true; value: AgentPayload } | { ok: false; error: string } {
-	const message =
-		typeof payload.message === "string" ? payload.message.trim() : "";
+	const message = typeof payload.message === "string" ? payload.message.trim() : "";
 	if (!message) {
 		return { ok: false, error: "message required" };
 	}
 
 	const name =
-		typeof payload.name === "string" && payload.name.trim()
-			? payload.name.trim()
-			: "Hook";
+		typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : "Hook";
 
-	const wakeMode =
-		payload.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
+	const wakeMode = payload.wakeMode === "next-heartbeat" ? "next-heartbeat" : "now";
 
 	const sessionKey =
 		typeof payload.sessionKey === "string" && payload.sessionKey.trim()
@@ -219,15 +215,10 @@ export function validateAgentPayload(
 			? payload.channel.trim()
 			: undefined;
 
-	const to =
-		typeof payload.to === "string" && payload.to.trim()
-			? payload.to.trim()
-			: undefined;
+	const to = typeof payload.to === "string" && payload.to.trim() ? payload.to.trim() : undefined;
 
 	const model =
-		typeof payload.model === "string" && payload.model.trim()
-			? payload.model.trim()
-			: undefined;
+		typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : undefined;
 
 	const thinking =
 		typeof payload.thinking === "string" && payload.thinking.trim()
@@ -516,10 +507,7 @@ interface AgentRunConfig {
  *   - `allowUnsafeExternalContent`: if true, do not wrap external content with safety boundaries
  * @param ctx - Webhook handler context used for injection, logging, and event emission
  */
-async function runAgentAsync(
-	config: AgentRunConfig,
-	ctx: WebhookHandlerContext,
-): Promise<void> {
+async function runAgentAsync(config: AgentRunConfig, ctx: WebhookHandlerContext): Promise<void> {
 	const {
 		message,
 		name,
@@ -610,11 +598,7 @@ export async function handleGitHub(
 	if (githubConfig?.webhookSecret) {
 		const signature = headers["x-hub-signature-256"];
 		if (
-			!verifyGitHubSignature(
-				Buffer.from(rawBody, "utf-8"),
-				signature,
-				githubConfig.webhookSecret,
-			)
+			!verifyGitHubSignature(Buffer.from(rawBody, "utf-8"), signature, githubConfig.webhookSecret)
 		) {
 			ctx.logger.warn({ msg: "GitHub webhook signature verification failed" });
 			return { ok: false, error: "Invalid signature" };
@@ -637,9 +621,7 @@ export async function handleGitHub(
 
 	// Check allowed orgs if configured (fix nested owner access)
 	const org =
-		((payload.organization as Record<string, unknown> | undefined)?.login as
-			| string
-			| undefined) ??
+		((payload.organization as Record<string, unknown> | undefined)?.login as string | undefined) ??
 		((
 			(payload.repository as Record<string, unknown> | undefined)?.owner as
 				| Record<string, unknown>
@@ -665,18 +647,14 @@ export async function handleGitHub(
 
 		const pr = payload.pull_request as Record<string, unknown> | undefined;
 		const action = payload.action as string;
-		const repo = (payload.repository as Record<string, unknown>)
-			?.full_name as string;
+		const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
 		// Sanitize untrusted fields
 		const safeAction = sanitizeString(action, 200);
 		const safeRepo = sanitizeString(repo, 500);
 		const safePrNumber = sanitizeString(String(pr?.number ?? ""), 50);
 		const safeTitle = sanitizeString(pr?.title, 2000);
-		const safeUser = sanitizeString(
-			(pr?.user as Record<string, unknown>)?.login,
-			200,
-		);
+		const safeUser = sanitizeString((pr?.user as Record<string, unknown>)?.login, 200);
 		const safeUrl = sanitizeString(pr?.html_url, 2000);
 
 		message =
@@ -690,8 +668,7 @@ export async function handleGitHub(
 
 		const release = payload.release as Record<string, unknown> | undefined;
 		const action = payload.action as string;
-		const repo = (payload.repository as Record<string, unknown>)
-			?.full_name as string;
+		const repo = (payload.repository as Record<string, unknown>)?.full_name as string;
 
 		// Sanitize untrusted fields
 		const safeAction = sanitizeString(action, 200);
@@ -713,8 +690,7 @@ export async function handleGitHub(
 			500,
 		);
 
-		message =
-			`GitHub ${eventType}: ${safeAction}\n` + `Repository: ${safeRepo}`;
+		message = `GitHub ${eventType}: ${safeAction}\n` + `Repository: ${safeRepo}`;
 	}
 
 	if (!targetSession) {
@@ -758,19 +734,11 @@ export async function handleGitHub(
 // HTTP Response Helpers
 // ============================================================================
 
-export function sendJson(
-	res: ServerResponse,
-	status: number,
-	body: unknown,
-): void {
+export function sendJson(res: ServerResponse, status: number, body: unknown): void {
 	res.writeHead(status, { "Content-Type": "application/json" });
 	res.end(JSON.stringify(body));
 }
 
-export function sendError(
-	res: ServerResponse,
-	status: number,
-	error: string,
-): void {
+export function sendError(res: ServerResponse, status: number, error: string): void {
 	sendJson(res, status, { ok: false, error });
 }

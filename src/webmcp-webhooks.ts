@@ -29,10 +29,7 @@ export interface WebMCPTool {
 	name: string;
 	description: string;
 	parameters: Record<string, ParameterSchema>;
-	handler: (
-		params: Record<string, unknown>,
-		auth: AuthContext,
-	) => Promise<unknown>;
+	handler: (params: Record<string, unknown>, auth: AuthContext) => Promise<unknown>;
 }
 
 export interface WebMCPRegistry {
@@ -70,9 +67,7 @@ async function daemonRequest<T>(
 	});
 	if (!res.ok) {
 		const err = await res.json().catch(() => ({ error: "Request failed" }));
-		throw new Error(
-			(err as { error?: string }).error || `Request failed (${res.status})`,
-		);
+		throw new Error((err as { error?: string }).error || `Request failed (${res.status})`);
 	}
 	return res.json() as Promise<T>;
 }
@@ -90,10 +85,7 @@ async function daemonRequest<T>(
  * @param registry - The WebMCPRegistry instance to register tools on
  * @param apiBase  - Base URL of the WOPR daemon API (e.g. "/api" or "http://localhost:7437")
  */
-export function registerWebhooksTools(
-	registry: WebMCPRegistry,
-	apiBase = "/api",
-): void {
+export function registerWebhooksTools(registry: WebMCPRegistry, apiBase = "/api"): void {
 	// 1. listWebhooks
 	registry.register({
 		name: "listWebhooks",
@@ -118,8 +110,7 @@ export function registerWebhooksTools(
 			},
 			limit: {
 				type: "number",
-				description:
-					"Maximum number of deliveries to return (default: 50, max: 200)",
+				description: "Maximum number of deliveries to return (default: 50, max: 200)",
 				required: false,
 			},
 		},

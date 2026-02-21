@@ -89,10 +89,7 @@ const transformCache = new Map<string, HookTransformFn>();
 // Mapping Resolution
 // ============================================================================
 
-export function resolveMappings(
-	config: WebhooksConfig,
-	woprHome: string,
-): HookMappingResolved[] {
+export function resolveMappings(config: WebhooksConfig, woprHome: string): HookMappingResolved[] {
 	const presets = config.presets ?? [];
 	const mappings: HookMappingConfig[] = [];
 
@@ -109,10 +106,7 @@ export function resolveMappings(
 		}
 
 		// Apply preset-specific config
-		if (
-			preset === "gmail" &&
-			config.gmail?.allowUnsafeExternalContent !== undefined
-		) {
+		if (preset === "gmail" && config.gmail?.allowUnsafeExternalContent !== undefined) {
 			mappings.push(
 				...presetMappings.map((m) => ({
 					...m,
@@ -225,10 +219,7 @@ export async function applyMappings(
 	return null; // No mapping matched
 }
 
-function mappingMatches(
-	mapping: HookMappingResolved,
-	ctx: HookMappingContext,
-): boolean {
+function mappingMatches(mapping: HookMappingResolved, ctx: HookMappingContext): boolean {
 	// Match by path
 	if (mapping.matchPath) {
 		if (mapping.matchPath !== normalizeMatchPath(ctx.path)) {
@@ -238,8 +229,7 @@ function mappingMatches(
 
 	// Match by payload.source
 	if (mapping.matchSource) {
-		const source =
-			typeof ctx.payload.source === "string" ? ctx.payload.source : undefined;
+		const source = typeof ctx.payload.source === "string" ? ctx.payload.source : undefined;
 		if (!source || source !== mapping.matchSource) {
 			return false;
 		}
@@ -303,31 +293,19 @@ function mergeAction(
 
 	if (kind === "wake") {
 		const baseWake = base.kind === "wake" ? base : undefined;
-		const text =
-			typeof override.text === "string"
-				? override.text
-				: (baseWake?.text ?? "");
+		const text = typeof override.text === "string" ? override.text : (baseWake?.text ?? "");
 		const session =
-			typeof override.session === "string"
-				? override.session
-				: (baseWake?.session ?? "");
-		const mode =
-			override.mode === "next-heartbeat"
-				? "next-heartbeat"
-				: (baseWake?.mode ?? "now");
+			typeof override.session === "string" ? override.session : (baseWake?.session ?? "");
+		const mode = override.mode === "next-heartbeat" ? "next-heartbeat" : (baseWake?.mode ?? "now");
 		return validateAction({ kind: "wake", text, session, mode });
 	}
 
 	// Agent action
 	const baseAgent = base.kind === "agent" ? base : undefined;
 	const message =
-		typeof override.message === "string"
-			? override.message
-			: (baseAgent?.message ?? "");
+		typeof override.message === "string" ? override.message : (baseAgent?.message ?? "");
 	const wakeMode =
-		override.wakeMode === "next-heartbeat"
-			? "next-heartbeat"
-			: (baseAgent?.wakeMode ?? "now");
+		override.wakeMode === "next-heartbeat" ? "next-heartbeat" : (baseAgent?.wakeMode ?? "now");
 
 	return validateAction({
 		kind: "agent",
@@ -335,10 +313,7 @@ function mergeAction(
 		wakeMode,
 		name: override.name ?? baseAgent?.name,
 		sessionKey: override.sessionKey ?? baseAgent?.sessionKey,
-		deliver:
-			typeof override.deliver === "boolean"
-				? override.deliver
-				: baseAgent?.deliver,
+		deliver: typeof override.deliver === "boolean" ? override.deliver : baseAgent?.deliver,
 		channel: override.channel ?? baseAgent?.channel,
 		to: override.to ?? baseAgent?.to,
 		model: override.model ?? baseAgent?.model,
@@ -389,13 +364,8 @@ async function loadTransform(transform: {
 	return fn;
 }
 
-function resolveTransformFn(
-	mod: Record<string, unknown>,
-	exportName?: string,
-): HookTransformFn {
-	const candidate = exportName
-		? mod[exportName]
-		: (mod.default ?? mod.transform);
+function resolveTransformFn(mod: Record<string, unknown>, exportName?: string): HookTransformFn {
+	const candidate = exportName ? mod[exportName] : (mod.default ?? mod.transform);
 
 	if (typeof candidate !== "function") {
 		throw new Error("hook transform module must export a function");
@@ -428,10 +398,7 @@ function renderTemplate(template: string, ctx: HookMappingContext): string {
 	});
 }
 
-function renderOptional(
-	value: string | undefined,
-	ctx: HookMappingContext,
-): string | undefined {
+function renderOptional(value: string | undefined, ctx: HookMappingContext): string | undefined {
 	if (!value) {
 		return undefined;
 	}

@@ -16,10 +16,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
  * This wraps untrusted content with markers that tell the AI to treat it
  * as potentially malicious and not follow any instructions within it.
  */
-export function wrapExternalContent(
-	content: string,
-	source: string = "external",
-): string {
+export function wrapExternalContent(content: string, source: string = "external"): string {
 	const boundary = generateBoundary();
 
 	return `
@@ -48,10 +45,7 @@ export function unwrapExternalContent(wrapped: string): string {
  * Check if content is wrapped with safety boundaries.
  */
 export function isWrappedContent(content: string): boolean {
-	return (
-		content.includes("<external-content") &&
-		content.includes("</external-content>")
-	);
+	return content.includes("<external-content") && content.includes("</external-content>");
 }
 
 // ============================================================================
@@ -62,10 +56,7 @@ export function isWrappedContent(content: string): boolean {
  * Sanitize a string for safe inclusion in prompts.
  * Removes control characters and limits length.
  */
-export function sanitizeString(
-	input: unknown,
-	maxLength: number = 10000,
-): string {
+export function sanitizeString(input: unknown, maxLength: number = 10000): string {
 	if (typeof input !== "string") {
 		return "";
 	}
@@ -76,7 +67,7 @@ export function sanitizeString(
 
 	// Limit length
 	if (sanitized.length > maxLength) {
-		sanitized = sanitized.slice(0, maxLength) + "... [truncated]";
+		sanitized = `${sanitized.slice(0, maxLength)}... [truncated]`;
 	}
 
 	return sanitized;
@@ -110,9 +101,7 @@ export function sanitizeObject(
 	if (Array.isArray(obj)) {
 		return obj
 			.slice(0, 100)
-			.map((item) =>
-				sanitizeObject(item, maxDepth, maxStringLength, currentDepth + 1),
-			);
+			.map((item) => sanitizeObject(item, maxDepth, maxStringLength, currentDepth + 1));
 	}
 
 	if (typeof obj === "object") {
@@ -157,8 +146,7 @@ export function secureCompare(a: string, b: string): boolean {
  * @returns A string of `length` characters containing only `A-Z`, `a-z`, and `0-9`
  */
 export function generateToken(length: number = 32): string {
-	const chars =
-		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 	// Use rejection sampling to avoid modulo bias: discard bytes >= the largest
 	// multiple of chars.length that fits in a byte (0–255) so the remaining
 	// range maps evenly onto chars.
@@ -203,10 +191,7 @@ export function verifyGitHubSignature(
 		return false;
 	}
 
-	const computedSig = createHmac("sha256", secret)
-		.update(payload)
-		.digest("hex")
-		.toLowerCase();
+	const computedSig = createHmac("sha256", secret).update(payload).digest("hex").toLowerCase();
 
 	// Use constant-time comparison to prevent timing attacks
 	return secureCompare(expectedSig, computedSig);
