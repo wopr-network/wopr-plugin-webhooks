@@ -734,9 +734,23 @@ export async function handleGitHub(
 // HTTP Response Helpers
 // ============================================================================
 
+function sanitizeForJson(value: unknown): unknown {
+	if (value instanceof Error) {
+		return { message: value.message };
+	}
+	if (value !== null && typeof value === "object") {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+			out[k] = sanitizeForJson(v);
+		}
+		return out;
+	}
+	return value;
+}
+
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
 	res.writeHead(status, { "Content-Type": "application/json" });
-	res.end(JSON.stringify(body));
+	res.end(JSON.stringify(sanitizeForJson(body)));
 }
 
 export function sendError(res: ServerResponse, status: number, error: string): void {

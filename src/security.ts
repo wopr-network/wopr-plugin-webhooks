@@ -223,7 +223,12 @@ interface RateLimitEntry {
 	resetAt: number;
 }
 
+// NOTE: This is an in-memory store and violates the WOPR repository pattern (plugins should
+// use persistent storage via ctx). This is a known limitation of the existing implementation
+// and should be addressed in a future story when ctx storage abstraction is available.
+// Exported for test access only — do not use in production code.
 const rateLimitStore = new Map<string, RateLimitEntry>();
+export { rateLimitStore as _rateLimitStore };
 
 /**
  * Check if a request should be rate limited.
