@@ -14,7 +14,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
+import type { Repository, WOPRPlugin, WOPRPluginContext } from "@wopr-network/plugin-types";
 import {
 	extractToken,
 	handleAgent,
@@ -29,7 +29,7 @@ import {
 	type WebhookHandlerContext,
 } from "./handlers.js";
 import { applyMappings, clearTransformCache, resolveMappings } from "./mappings.js";
-import { secureCompare } from "./security.js";
+import { rateLimitSchema, secureCompare } from "./security.js";
 import type {
 	FunnelExtension,
 	GitHubHookConfig,
@@ -63,6 +63,9 @@ let resolvedConfig: WebhooksConfigResolved | null = null;
 let ctx: WOPRPluginContext | null = null;
 let listeningPort: number | null = null;
 let publicUrl: string | null = null;
+const state = {
+	rateLimitRepo: null as Repository<{ id: string; count: number; resetAt: number }> | null,
+};
 const cleanups: Array<() => void | Promise<void>> = [];
 
 // ============================================================================
@@ -458,6 +461,24 @@ const plugin: WOPRPlugin = {
 	async init(pluginCtx: WOPRPluginContext) {
 		ctx = pluginCtx;
 
+		// Register storage schema for rate limiting
+		await pluginCtx.storage.register({
+			namespace: "wopr-plugin-webhooks",
+			version: 1,
+			tables: {
+				rate_limits: {
+					schema: rateLimitSchema,
+					primaryKey: "id",
+					indexes: [{ fields: ["resetAt"] }],
+				},
+			},
+		});
+		state.rateLimitRepo = pluginCtx.storage.getRepository<{
+			id: string;
+			count: number;
+			resetAt: number;
+		}>("wopr-plugin-webhooks", "rate_limits");
+
 		// Register config schema
 		if (pluginCtx.registerConfigSchema) {
 			pluginCtx.registerConfigSchema("wopr-plugin-webhooks", configSchema);
@@ -769,6 +790,7 @@ const plugin: WOPRPlugin = {
 		resolvedConfig = null;
 		listeningPort = null;
 		publicUrl = null;
+		state.rateLimitRepo = null;
 		ctx = null;
 	},
 };
