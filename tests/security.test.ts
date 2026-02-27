@@ -323,7 +323,7 @@ function createMockRepo(): Repository<{ id: string; count: number; resetAt: numb
     exists: vi.fn(async (id) => store.has(id)),
     query: vi.fn(() => { throw new Error("not implemented"); }),
     raw: vi.fn(async () => []),
-    transaction: vi.fn(async (fn) => fn({} as Repository<{ id: string; count: number; resetAt: number }>)),
+    transaction: vi.fn(async function(this: Repository<{ id: string; count: number; resetAt: number }>, fn) { return fn(this); }),
   } as unknown as Repository<{ id: string; count: number; resetAt: number }>;
 }
 

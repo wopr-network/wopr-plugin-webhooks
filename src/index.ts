@@ -29,7 +29,7 @@ import {
 	type WebhookHandlerContext,
 } from "./handlers.js";
 import { applyMappings, clearTransformCache, resolveMappings } from "./mappings.js";
-import { rateLimitSchema, secureCompare } from "./security.js";
+import { checkRateLimit, rateLimitSchema, secureCompare } from "./security.js";
 import type {
 	FunnelExtension,
 	GitHubHookConfig,
@@ -124,6 +124,7 @@ function createWebhookServer(
 	githubConfig: GitHubHookConfig | undefined,
 	ctx: WOPRPluginContext,
 	logger: Logger,
+	rateLimitRepo: Repository<{ id: string; count: number; resetAt: number }> | null,
 ): ReturnType<typeof createServer> {
 	const handlerCtx: WebhookHandlerContext = {
 		config,
@@ -188,6 +189,19 @@ function createWebhookServer(
 		if (!secureCompare(token, config.token)) {
 			sendError(res, 401, "Invalid token");
 			return;
+		}
+
+		// Enforce rate limiting per remote IP
+		if (rateLimitRepo) {
+			const ip = req.socket.remoteAddress || "unknown";
+			const rl = await checkRateLimit(ip, 100, 60_000, rateLimitRepo);
+			res.setHeader("X-RateLimit-Limit", "100");
+			res.setHeader("X-RateLimit-Remaining", String(rl.remaining));
+			res.setHeader("X-RateLimit-Reset", String(Math.ceil(rl.resetAt / 1000)));
+			if (!rl.allowed) {
+				sendError(res, 429, "Too many requests");
+				return;
+			}
 		}
 
 		// Read body
@@ -551,7 +565,13 @@ const plugin: WOPRPlugin = {
 		const port = config.port || DEFAULT_PORT;
 		const host = config.host || "127.0.0.1";
 
-		const srv = createWebhookServer(resolvedConfig, githubConfig, pluginCtx, logger);
+		const srv = createWebhookServer(
+			resolvedConfig,
+			githubConfig,
+			pluginCtx,
+			logger,
+			state.rateLimitRepo,
+		);
 		server = srv;
 
 		await new Promise<void>((resolve, reject) => {

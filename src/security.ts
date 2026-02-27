@@ -243,34 +243,44 @@ export async function checkRateLimit(
 	windowMs: number,
 	repo: Repository<RateLimitRow>,
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-	const now = Date.now();
-	const entry = await repo.findById(key);
-
-	// Clean up expired entries periodically
+	// Clean up expired entries periodically (fetch all, filter in memory to avoid
+	// relying on driver-specific query operators like $lt).
 	const totalCount = await repo.count();
 	if (totalCount > 10000) {
-		await repo.deleteMany({ resetAt: { $lt: now } } as Parameters<typeof repo.deleteMany>[0]);
+		const now = Date.now();
+		const all = await repo.findMany();
+		const expired = all.filter((e) => e.resetAt < now);
+		await Promise.all(expired.map((e) => repo.delete(e.id)));
 	}
 
-	if (!entry || entry.resetAt < now) {
-		// New window — upsert
-		const newEntry: RateLimitRow = { id: key, count: 1, resetAt: now + windowMs };
-		if (entry) {
-			await repo.update(key, { count: 1, resetAt: now + windowMs });
-		} else {
-			await repo.insert(newEntry);
+	// Wrap the read-modify-write in a transaction so concurrent requests are
+	// serialized by the storage driver, preventing two callers from both reading
+	// count=N and both writing count=N+1 (TOCTOU race).
+	return repo.transaction(async (tx) => {
+		const now = Date.now();
+		const entry = await tx.findById(key);
+
+		if (!entry || entry.resetAt < now) {
+			// New window
+			const resetAt = now + windowMs;
+			if (entry) {
+				await tx.update(key, { count: 1, resetAt });
+			} else {
+				await tx.insert({ id: key, count: 1, resetAt });
+			}
+			return { allowed: true, remaining: limit - 1, resetAt };
 		}
-		return { allowed: true, remaining: limit - 1, resetAt: newEntry.resetAt };
-	}
 
-	if (entry.count >= limit) {
-		return { allowed: false, remaining: 0, resetAt: entry.resetAt };
-	}
+		if (entry.count >= limit) {
+			return { allowed: false, remaining: 0, resetAt: entry.resetAt };
+		}
 
-	await repo.update(key, { count: entry.count + 1 });
-	return {
-		allowed: true,
-		remaining: limit - (entry.count + 1),
-		resetAt: entry.resetAt,
-	};
+		const newCount = entry.count + 1;
+		await tx.update(key, { count: newCount });
+		return {
+			allowed: true,
+			remaining: limit - newCount,
+			resetAt: entry.resetAt,
+		};
+	});
 }

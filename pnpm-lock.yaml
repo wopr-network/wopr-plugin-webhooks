@@ -10,7 +10,10 @@ importers:
     dependencies:
       '@wopr-network/plugin-types':
         specifier: ^0.2.0
-        version: 0.2.1(zod@3.25.76)
+        version: 0.2.1(zod@4.3.6)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@biomejs/biome':
         specifier: ^2.4.3
@@ -595,8 +598,8 @@ packages:
     engines: {node: '>=8'}
     hasBin: true
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
 
@@ -844,9 +847,9 @@ snapshots:
       '@vitest/pretty-format': 4.0.18
       tinyrainbow: 3.0.3
 
-  '@wopr-network/plugin-types@0.2.1(zod@3.25.76)':
+  '@wopr-network/plugin-types@0.2.1(zod@4.3.6)':
     dependencies:
-      zod: 3.25.76
+      zod: 4.3.6
 
   assertion-error@2.0.1: {}
 
@@ -1024,4 +1027,4 @@ snapshots:
       siginfo: 2.0.0
       stackback: 0.0.2
 
-  zod@3.25.76: {}
+  zod@4.3.6: {}
