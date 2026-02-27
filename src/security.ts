@@ -5,6 +5,8 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import type { Repository } from "@wopr-network/plugin-types";
+import { z } from "zod";
 
 // ============================================================================
 // External Content Safety
@@ -215,20 +217,16 @@ function escapeXml(str: string): string {
 }
 
 // ============================================================================
-// Rate Limiting (Simple In-Memory)
+// Rate Limiting (Persistent via ctx.storage)
 // ============================================================================
 
-interface RateLimitEntry {
-	count: number;
-	resetAt: number;
-}
+export const rateLimitSchema = z.object({
+	id: z.string(),
+	count: z.number(),
+	resetAt: z.number(),
+});
 
-// NOTE: This is an in-memory store and violates the WOPR repository pattern (plugins should
-// use persistent storage via ctx). This is a known limitation of the existing implementation
-// and should be addressed in a future story when ctx storage abstraction is available.
-// Exported for test access only — do not use in production code.
-const rateLimitStore = new Map<string, RateLimitEntry>();
-export { rateLimitStore as _rateLimitStore };
+type RateLimitRow = z.infer<typeof rateLimitSchema>;
 
 /**
  * Check if a request should be rate limited.
@@ -236,50 +234,45 @@ export { rateLimitStore as _rateLimitStore };
  * @param key - Unique identifier (e.g., IP address, token)
  * @param limit - Maximum requests per window
  * @param windowMs - Time window in milliseconds
- * @returns true if request should be allowed, false if rate limited
+ * @param repo - Storage repository for rate limit entries
+ * @returns Promise with allowed status, remaining count, and reset timestamp
  */
-export function checkRateLimit(
+export async function checkRateLimit(
 	key: string,
 	limit: number,
 	windowMs: number,
-): { allowed: boolean; remaining: number; resetAt: number } {
-	const now = Date.now();
-	let entry = rateLimitStore.get(key);
+	repo: Repository<RateLimitRow>,
+): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
+	return repo.transaction(async (txRepo) => {
+		const now = Date.now();
+		const entry = await txRepo.findById(key);
 
-	// Clean up expired entries periodically
-	if (rateLimitStore.size > 10000) {
-		for (const [k, v] of rateLimitStore) {
-			if (v.resetAt < now) {
-				rateLimitStore.delete(k);
-			}
+		// Clean up expired entries periodically
+		const totalCount = await txRepo.count();
+		if (totalCount > 10000) {
+			await txRepo.deleteMany({ resetAt: { $lt: now } } as Parameters<typeof txRepo.deleteMany>[0]);
 		}
-	}
 
-	if (!entry || entry.resetAt < now) {
-		// New window
-		entry = {
-			count: 1,
-			resetAt: now + windowMs,
+		if (!entry || entry.resetAt < now) {
+			// New window — upsert
+			const newEntry: RateLimitRow = { id: key, count: 1, resetAt: now + windowMs };
+			if (entry) {
+				await txRepo.update(key, { count: 1, resetAt: now + windowMs });
+			} else {
+				await txRepo.insert(newEntry);
+			}
+			return { allowed: true, remaining: limit - 1, resetAt: newEntry.resetAt };
+		}
+
+		if (entry.count >= limit) {
+			return { allowed: false, remaining: 0, resetAt: entry.resetAt };
+		}
+
+		await txRepo.update(key, { count: entry.count + 1 });
+		return {
+			allowed: true,
+			remaining: limit - (entry.count + 1),
+			resetAt: entry.resetAt,
 		};
-		rateLimitStore.set(key, entry);
-		return { allowed: true, remaining: limit - 1, resetAt: entry.resetAt };
-	}
-
-	if (entry.count >= limit) {
-		return { allowed: false, remaining: 0, resetAt: entry.resetAt };
-	}
-
-	entry.count++;
-	return {
-		allowed: true,
-		remaining: limit - entry.count,
-		resetAt: entry.resetAt,
-	};
-}
-
-/**
- * Clear rate limit store (for testing).
- */
-export function clearRateLimits(): void {
-	rateLimitStore.clear();
+	});
 }

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { Repository } from "@wopr-network/plugin-types";
 import {
   wrapExternalContent,
   unwrapExternalContent,
@@ -9,9 +10,12 @@ import {
   generateToken,
   verifyGitHubSignature,
   checkRateLimit,
-  clearRateLimits,
+  rateLimitSchema,
 } from "../src/security.js";
 import { createHmac } from "node:crypto";
+
+// Suppress unused import warning
+void rateLimitSchema;
 
 // ============================================================================
 // wrapExternalContent
@@ -288,47 +292,85 @@ describe("verifyGitHubSignature", () => {
 // checkRateLimit
 // ============================================================================
 
+function createMockRepo(): Repository<{ id: string; count: number; resetAt: number }> {
+  const store = new Map<string, { id: string; count: number; resetAt: number }>();
+  const mockRepo: Repository<{ id: string; count: number; resetAt: number }> = {
+    insert: vi.fn(async (data) => { store.set(data.id, { ...data }); return data; }),
+    insertMany: vi.fn(async (items) => { for (const d of items) store.set(d.id, { ...d }); return items; }),
+    findById: vi.fn(async (id) => store.get(id) ?? null),
+    findFirst: vi.fn(async () => null),
+    findMany: vi.fn(async () => [...store.values()]),
+    update: vi.fn(async (id, data) => {
+      const existing = store.get(id);
+      if (!existing) throw new Error("not found");
+      const updated = { ...existing, ...data } as { id: string; count: number; resetAt: number };
+      store.set(id, updated);
+      return updated;
+    }),
+    updateMany: vi.fn(async () => 0),
+    delete: vi.fn(async (id) => store.delete(id)),
+    deleteMany: vi.fn(async (filter) => {
+      let count = 0;
+      for (const [k, v] of store) {
+        if (typeof filter?.resetAt === "object" && filter.resetAt !== null && "$lt" in filter.resetAt && v.resetAt < (filter.resetAt as { $lt: number }).$lt) {
+          store.delete(k);
+          count++;
+        }
+      }
+      return count;
+    }),
+    count: vi.fn(async () => store.size),
+    exists: vi.fn(async (id) => store.has(id)),
+    query: vi.fn(() => { throw new Error("not implemented"); }),
+    raw: vi.fn(async () => []),
+    transaction: vi.fn(async (fn) => fn(mockRepo)),
+  } as unknown as Repository<{ id: string; count: number; resetAt: number }>;
+  return mockRepo;
+}
+
 describe("checkRateLimit", () => {
+  let repo: Repository<{ id: string; count: number; resetAt: number }>;
+
   beforeEach(() => {
-    clearRateLimits();
+    repo = createMockRepo();
   });
 
-  it("allows first request", () => {
-    const result = checkRateLimit("test-key", 5, 60000);
+  it("allows first request", async () => {
+    const result = await checkRateLimit("test-key", 5, 60000, repo);
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(4);
   });
 
-  it("tracks remaining requests", () => {
-    checkRateLimit("test-key", 5, 60000);
-    checkRateLimit("test-key", 5, 60000);
-    const result = checkRateLimit("test-key", 5, 60000);
+  it("tracks remaining requests", async () => {
+    await checkRateLimit("test-key", 5, 60000, repo);
+    await checkRateLimit("test-key", 5, 60000, repo);
+    const result = await checkRateLimit("test-key", 5, 60000, repo);
     expect(result.allowed).toBe(true);
     expect(result.remaining).toBe(2);
   });
 
-  it("blocks after limit is reached", () => {
+  it("blocks after limit is reached", async () => {
     for (let i = 0; i < 5; i++) {
-      checkRateLimit("test-key", 5, 60000);
+      await checkRateLimit("test-key", 5, 60000, repo);
     }
-    const result = checkRateLimit("test-key", 5, 60000);
+    const result = await checkRateLimit("test-key", 5, 60000, repo);
     expect(result.allowed).toBe(false);
     expect(result.remaining).toBe(0);
   });
 
-  it("tracks different keys independently", () => {
+  it("tracks different keys independently", async () => {
     for (let i = 0; i < 5; i++) {
-      checkRateLimit("key-a", 5, 60000);
+      await checkRateLimit("key-a", 5, 60000, repo);
     }
-    const resultA = checkRateLimit("key-a", 5, 60000);
-    const resultB = checkRateLimit("key-b", 5, 60000);
+    const resultA = await checkRateLimit("key-a", 5, 60000, repo);
+    const resultB = await checkRateLimit("key-b", 5, 60000, repo);
     expect(resultA.allowed).toBe(false);
     expect(resultB.allowed).toBe(true);
   });
 
-  it("provides resetAt timestamp", () => {
+  it("provides resetAt timestamp", async () => {
     const before = Date.now();
-    const result = checkRateLimit("test-key", 5, 60000);
+    const result = await checkRateLimit("test-key", 5, 60000, repo);
     expect(result.resetAt).toBeGreaterThanOrEqual(before + 60000);
   });
 });
