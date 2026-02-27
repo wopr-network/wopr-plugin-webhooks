@@ -228,6 +228,30 @@ export const rateLimitSchema = z.object({
 
 type RateLimitRow = z.infer<typeof rateLimitSchema>;
 
+// Per-key serialization queue to prevent TOCTOU races in a single-process plugin.
+// Two concurrent requests for the same key will queue behind each other rather than
+// both reading the same stale count and both writing count+1.
+const rateLimitLocks = new Map<string, Promise<void>>();
+
+async function withRateLimitLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+	const prev = rateLimitLocks.get(key) ?? Promise.resolve();
+	let resolve!: () => void;
+	const next = new Promise<void>((r) => {
+		resolve = r;
+	});
+	rateLimitLocks.set(key, next);
+	await prev;
+	try {
+		return await fn();
+	} finally {
+		resolve();
+		// Clean up the lock entry if it's still ours (no new waiter queued behind us)
+		if (rateLimitLocks.get(key) === next) {
+			rateLimitLocks.delete(key);
+		}
+	}
+}
+
 /**
  * Check if a request should be rate limited.
  *
@@ -253,20 +277,21 @@ export async function checkRateLimit(
 		await Promise.all(expired.map((e) => repo.delete(e.id)));
 	}
 
-	// Wrap the read-modify-write in a transaction so concurrent requests are
-	// serialized by the storage driver, preventing two callers from both reading
-	// count=N and both writing count=N+1 (TOCTOU race).
-	return repo.transaction(async (tx) => {
+	// Serialize concurrent requests for the same key via an in-memory lock so that
+	// only one read-modify-write is in flight at a time per key. This prevents the
+	// TOCTOU race where two concurrent requests both read count=N and both write
+	// count=N+1. Using an in-memory lock is correct for a single-process plugin.
+	return withRateLimitLock(key, async () => {
 		const now = Date.now();
-		const entry = await tx.findById(key);
+		const entry = await repo.findById(key);
 
 		if (!entry || entry.resetAt < now) {
 			// New window
 			const resetAt = now + windowMs;
 			if (entry) {
-				await tx.update(key, { count: 1, resetAt });
+				await repo.update(key, { count: 1, resetAt });
 			} else {
-				await tx.insert({ id: key, count: 1, resetAt });
+				await repo.insert({ id: key, count: 1, resetAt });
 			}
 			return { allowed: true, remaining: limit - 1, resetAt };
 		}
@@ -276,7 +301,7 @@ export async function checkRateLimit(
 		}
 
 		const newCount = entry.count + 1;
-		await tx.update(key, { count: newCount });
+		await repo.update(key, { count: newCount });
 		return {
 			allowed: true,
 			remaining: limit - newCount,
