@@ -243,34 +243,36 @@ export async function checkRateLimit(
 	windowMs: number,
 	repo: Repository<RateLimitRow>,
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-	const now = Date.now();
-	const entry = await repo.findById(key);
+	return repo.transaction(async (txRepo) => {
+		const now = Date.now();
+		const entry = await txRepo.findById(key);
 
-	// Clean up expired entries periodically
-	const totalCount = await repo.count();
-	if (totalCount > 10000) {
-		await repo.deleteMany({ resetAt: { $lt: now } } as Parameters<typeof repo.deleteMany>[0]);
-	}
-
-	if (!entry || entry.resetAt < now) {
-		// New window — upsert
-		const newEntry: RateLimitRow = { id: key, count: 1, resetAt: now + windowMs };
-		if (entry) {
-			await repo.update(key, { count: 1, resetAt: now + windowMs });
-		} else {
-			await repo.insert(newEntry);
+		// Clean up expired entries periodically
+		const totalCount = await txRepo.count();
+		if (totalCount > 10000) {
+			await txRepo.deleteMany({ resetAt: { $lt: now } } as Parameters<typeof txRepo.deleteMany>[0]);
 		}
-		return { allowed: true, remaining: limit - 1, resetAt: newEntry.resetAt };
-	}
 
-	if (entry.count >= limit) {
-		return { allowed: false, remaining: 0, resetAt: entry.resetAt };
-	}
+		if (!entry || entry.resetAt < now) {
+			// New window — upsert
+			const newEntry: RateLimitRow = { id: key, count: 1, resetAt: now + windowMs };
+			if (entry) {
+				await txRepo.update(key, { count: 1, resetAt: now + windowMs });
+			} else {
+				await txRepo.insert(newEntry);
+			}
+			return { allowed: true, remaining: limit - 1, resetAt: newEntry.resetAt };
+		}
 
-	await repo.update(key, { count: entry.count + 1 });
-	return {
-		allowed: true,
-		remaining: limit - (entry.count + 1),
-		resetAt: entry.resetAt,
-	};
+		if (entry.count >= limit) {
+			return { allowed: false, remaining: 0, resetAt: entry.resetAt };
+		}
+
+		await txRepo.update(key, { count: entry.count + 1 });
+		return {
+			allowed: true,
+			remaining: limit - (entry.count + 1),
+			resetAt: entry.resetAt,
+		};
+	});
 }

@@ -294,7 +294,7 @@ describe("verifyGitHubSignature", () => {
 
 function createMockRepo(): Repository<{ id: string; count: number; resetAt: number }> {
   const store = new Map<string, { id: string; count: number; resetAt: number }>();
-  return {
+  const mockRepo: Repository<{ id: string; count: number; resetAt: number }> = {
     insert: vi.fn(async (data) => { store.set(data.id, { ...data }); return data; }),
     insertMany: vi.fn(async (items) => { for (const d of items) store.set(d.id, { ...d }); return items; }),
     findById: vi.fn(async (id) => store.get(id) ?? null),
@@ -323,8 +323,9 @@ function createMockRepo(): Repository<{ id: string; count: number; resetAt: numb
     exists: vi.fn(async (id) => store.has(id)),
     query: vi.fn(() => { throw new Error("not implemented"); }),
     raw: vi.fn(async () => []),
-    transaction: vi.fn(async (fn) => fn({} as Repository<{ id: string; count: number; resetAt: number }>)),
+    transaction: vi.fn(async (fn) => fn(mockRepo)),
   } as unknown as Repository<{ id: string; count: number; resetAt: number }>;
+  return mockRepo;
 }
 
 describe("checkRateLimit", () => {
