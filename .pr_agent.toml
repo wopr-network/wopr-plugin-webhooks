@@ -1,0 +1,4 @@
+[config]
+auto_review = true
+auto_improve = true
+auto_describe = true
