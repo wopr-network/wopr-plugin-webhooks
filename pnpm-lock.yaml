@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@wopr-network/plugin-types':
-        specifier: ^0.2.0
-        version: 0.2.1(zod@4.3.6)
+        specifier: ^0.9.0
+        version: 0.9.0(zod@4.3.6)
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -411,10 +411,10 @@ packages:
   '@vitest/utils@4.0.18':
     resolution: {integrity: sha512-msMRKLMVLWygpK3u2Hybgi4MNjcYJvwTb0Ru09+fOyCXIgT5raYP041DRRdiJiI3k/2U6SEbAETB3YtBrUkCFA==}
 
-  '@wopr-network/plugin-types@0.2.1':
-    resolution: {integrity: sha512-k9NC3RdVQrVtNIoEuoiP7S8i2/+9s46+YWX0BjDRmRRkZqcWnkpJ+H0ryEQZ0YfnTUfRdB+ZcteR0McduS3p+g==}
+  '@wopr-network/plugin-types@0.9.0':
+    resolution: {integrity: sha512-IZuOS2yDedofI8sSpspSE/Bl/7e2Z6MrDUlE6KdxCVGW7lS8lsoFBKuA/epcC3v9qqcIaghWc0IE0g4INRJCLw==}
     peerDependencies:
-      zod: ^3.23.0
+      zod: ^4.3.6
 
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
@@ -847,7 +847,7 @@ snapshots:
       '@vitest/pretty-format': 4.0.18
       tinyrainbow: 3.0.3
 
-  '@wopr-network/plugin-types@0.2.1(zod@4.3.6)':
+  '@wopr-network/plugin-types@0.9.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 
