@@ -1,4 +1,10 @@
-[config]
-auto_review = true
-auto_improve = true
-auto_describe = true
+[github_app]
+pr_commands = [
+  "/describe",
+  "/review",
+  "/improve",
+]
+push_commands = [
+  "/review",
+  "/improve",
+]
