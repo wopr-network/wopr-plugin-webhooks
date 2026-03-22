@@ -386,7 +386,6 @@ const plugin: WOPRPlugin = {
 					type: "webhooks",
 					id: "webhooks-http",
 					displayName: "HTTP Webhooks",
-					tier: "wopr",
 				},
 			],
 		},
