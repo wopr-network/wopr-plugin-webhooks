@@ -1,3 +1,11 @@
+# ⚠️ This package has moved
+
+This package is now maintained in the [wopr-plugins monorepo](https://github.com/wopr-network/wopr-plugins/tree/main/packages/plugin-webhooks).
+
+This repository is archived and no longer accepts contributions.
+
+---
+
 # wopr-plugin-webhooks
 
 HTTP webhook ingress for WOPR - trigger agent runs from external systems.
